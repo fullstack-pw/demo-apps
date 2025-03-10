@@ -8,6 +8,9 @@ on:
       - opened
       - synchronize
       - reopened
+  push:
+    branches:
+      - main
 
 jobs:
     docker-build-and-push:

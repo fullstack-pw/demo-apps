@@ -19,7 +19,7 @@ spec:
         - containerPort: 8080
         env:
         - name: OTEL_EXPORTER_OTLP_ENDPOINT
-          value: otel-collector.observability.svc.cluster.local:4317
+          value: opentelemetry-collector.observability.svc.cluster.local:4317
         resources:
           limits:
             cpu: 200m
