@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trace-demo
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: trace-demo
+        env:
+        - name: ENV
+          value: "prod"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: trace-demo
+spec:
+  ingressClassName: traefik
+  rules:
+  - host: prod.trace-demo.fullstack.pw
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: trace-demo
+            port:
+              number: 8080
