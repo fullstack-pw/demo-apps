@@ -1,0 +1,11 @@
+name: Tests Pipeline
+
+on:
+  push:
+
+jobs:
+  go-tests:
+    name: GO Tests
+    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+    with:
+      go-dir: ./apps/trace-demo
