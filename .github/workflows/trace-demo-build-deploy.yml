@@ -52,14 +52,14 @@ jobs:
   #   with:
   #     app-url: "https://stg.trace-demo.fullstack.pw"
 
-  # prod-deploy:
-  #   needs: stg-cypress-tests
-  #   name: PROD deploy
-  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-  #   with:
-  #     kustomize-dir: "./apps/trace-demo/kustomize/overlays/prod"
-  #     context: "prod"
-  #     app-name: trace-demo
+  prod-deploy:
+    needs: stg-cypress-tests
+    name: PROD deploy
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./apps/trace-demo/kustomize/overlays/prod"
+      context: "prod"
+      app-name: trace-demo
 
   # prod-cypress-tests:
   #   needs: prod-deploy
