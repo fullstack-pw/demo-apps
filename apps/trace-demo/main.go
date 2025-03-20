@@ -16,8 +16,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.4.0"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func initTracer() (*sdktrace.TracerProvider, error) {
@@ -42,34 +40,17 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Create a gRPC connection to the collector
-	fmt.Println("Establishing gRPC connection to collector...")
-
-	// Don't use WithBlock for non-local environments to avoid hanging
-	dialOpts := []grpc.DialOption{
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	}
-
-	// Only use WithBlock for debugging or if explicitly requested
-	useBlockingDial := os.Getenv("OTEL_BLOCKING_DIAL") == "true"
-	if useBlockingDial {
-		dialOpts = append(dialOpts, grpc.WithBlock())
-	}
-
-	conn, err := grpc.DialContext(ctx, otelEndpoint, dialOpts...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create gRPC connection: %w", err)
-	}
-	fmt.Println("gRPC connection established successfully")
-
-	// Configure the exporter
+	// Configure the exporter using the newer pattern (without directly using gRPC deprecated methods)
 	fmt.Println("Creating OTLP trace exporter...")
-	exporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
+	exporter, err := otlptracegrpc.New(
+		ctx,
+		otlptracegrpc.WithEndpoint(otelEndpoint),
+		otlptracegrpc.WithInsecure(),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 	fmt.Println("Trace exporter created successfully")
-
 	// Configure resource attributes
 	fmt.Println("Configuring resource attributes...")
 	res, err := resource.New(ctx,
