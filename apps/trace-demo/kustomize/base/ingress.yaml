@@ -9,19 +9,19 @@ metadata:
     external-dns.alpha.kubernetes.io/hostname: "trace-demo.fullstack.pw"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
-  ingressClassName: "nginx"
+  ingressClassName: "traefik"
   tls:
-  - hosts:
-    - "trace-demo.fullstack.pw"
-    secretName: trace-demo-tls
+    - hosts:
+        - "trace-demo.fullstack.pw"
+      secretName: trace-demo-tls
   rules:
-  - host: "trace-demo.fullstack.pw"
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: trace-demo
-            port:
-              number: 80
+    - host: "trace-demo.fullstack.pw"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: trace-demo
+                port:
+                  number: 80

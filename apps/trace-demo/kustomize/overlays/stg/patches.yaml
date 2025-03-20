@@ -7,26 +7,21 @@ spec:
   template:
     spec:
       containers:
-      - name: trace-demo
-        env:
-        - name: ENV
-          value: "stg"
+        - name: trace-demo
+          env:
+            - name: ENV
+              value: "stg"
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: trace-demo
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: "stg.trace-demo.fullstack.pw"
 spec:
-  ingressClassName: traefik
+  tls:
+    - hosts:
+        - "stg.trace-demo.fullstack.pw"
+      secretName: trace-demo-tls
   rules:
-  - host: stg.trace-demo.fullstack.pw
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: trace-demo
-            port:
-              number: 8080
-
+    - host: stg.trace-demo.fullstack.pw
