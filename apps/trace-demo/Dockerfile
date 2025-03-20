@@ -2,14 +2,11 @@ FROM golang:1.23.1
 
 WORKDIR /app
 
-# Copy go.mod and go.sum
-COPY go.mod go.sum ./
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY main.go go.mod go.sum ./
 
 # Download dependencies
-RUN go mod download
-
-# Copy the remaining source code
-COPY . .
+RUN go mod tidy
 
 # Build the application
 RUN go build -o main .

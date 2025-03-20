@@ -11,6 +11,9 @@ spec:
           env:
             - name: ENV
               value: "prod"
+            - name: DB_NAME
+              value: trace-demo-dev
+
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
