@@ -13,57 +13,57 @@ on:
       - main
 
 jobs:
-    docker-build-and-push:
-      name: Build and Push App
-      uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
-      with:
-          app-context: "./apps/trace-demo"
-          app-name: "trace-demo"
+  docker-build-and-push:
+    name: Build and Push App
+    uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
+    with:
+      app-context: "./apps/trace-demo"
+      app-name: "trace-demo"
 
-    dev-deploy:
-      needs: docker-build-and-push
-      name: DEV deploy
-      uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-      with:
-        kustomize-dir: "./apps/trace-demo/kustomize/overlays/dev"
-        context: "dev"
-        app-name: trace-demo
+  dev-deploy:
+    needs: docker-build-and-push
+    name: DEV deploy
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./apps/trace-demo/kustomize/overlays/dev"
+      context: "dev"
+      app-name: trace-demo
 
-    # dev-cypress-tests:
-    #   needs: dev-deploy
-    #   name: DEV cypress
-    #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-    #   with:
-    #     app-url: "https://dev.trace-demo.fullstack.pw"
+  # dev-cypress-tests:
+  #   needs: dev-deploy
+  #   name: DEV cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     app-url: "https://dev.trace-demo.fullstack.pw"
 
-    stg-deploy:
-      needs: dev-deploy
-      name: STG deploy
-      uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-      with:
-        kustomize-dir: "./apps/trace-demo/kustomize/overlays/stg"
-        context: "stg"
-        app-name: trace-demo
+  stg-deploy:
+    needs: dev-deploy
+    name: STG deploy
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./apps/trace-demo/kustomize/overlays/stg"
+      context: "stg"
+      app-name: trace-demo
 
-    # stg-cypress-tests:
-    #   needs: stg-deploy
-    #   name: STG cypress
-    #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-    #   with:
-    #     app-url: "https://stg.trace-demo.fullstack.pw"
+  # stg-cypress-tests:
+  #   needs: stg-deploy
+  #   name: STG cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     app-url: "https://stg.trace-demo.fullstack.pw"
 
-    # prod-deploy:
-    #   needs: stg-cypress-tests
-    #   name: PROD deploy
-    #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-    #   with:
-    #     kustomize-dir: "./apps/trace-demo/kustomize/overlays/prod"
-    #     context: "prod"
-    #     app-name: trace-demo
+  # prod-deploy:
+  #   needs: stg-cypress-tests
+  #   name: PROD deploy
+  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+  #   with:
+  #     kustomize-dir: "./apps/trace-demo/kustomize/overlays/prod"
+  #     context: "prod"
+  #     app-name: trace-demo
 
-    # prod-cypress-tests:
-    #   needs: prod-deploy
-    #   name: PROD cypress
-    #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-    #   with:
-    #     app-url: "https://trace-demo.fullstack.pw"
+  # prod-cypress-tests:
+  #   needs: prod-deploy
+  #   name: PROD cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     app-url: "https://trace-demo.fullstack.pw"

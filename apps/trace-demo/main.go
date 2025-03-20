@@ -27,7 +27,7 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 	// Get OpenTelemetry Collector endpoint from env vars or use default
 	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if otelEndpoint == "" {
-		otelEndpoint = "otel-collector.observability.svc.cluster.local:4317"
+		otelEndpoint = "opentelemetry-collector.observability.svc.cluster.local:4317"
 	}
 	fmt.Printf("Using OpenTelemetry endpoint: %s\n", otelEndpoint)
 
