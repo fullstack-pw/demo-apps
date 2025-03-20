@@ -103,11 +103,6 @@ func initDB() error {
 		dbPort = "5432"
 	}
 
-	dbName := os.Getenv("DB_NAME")
-	if dbName == "" {
-		dbName = "postgres"
-	}
-
 	dbUser := os.Getenv("DB_USER")
 	if dbUser == "" {
 		dbUser = "admin"
@@ -118,29 +113,67 @@ func initDB() error {
 		fmt.Println("Warning: DB_PASSWORD not set, using empty password")
 	}
 
-	// Create connection string
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		dbHost, dbPort, dbUser, dbPassword, dbName)
+	// Get environment-specific database name or fallback to default
+	env := os.Getenv("ENV")
+	dbNameEnv := os.Getenv("DB_NAME")
 
-	fmt.Printf("Connecting to PostgreSQL at %s:%s/%s as %s\n", dbHost, dbPort, dbName, dbUser)
+	// First try with environment-specific database if ENV is set
+	var dbNames []string
 
-	// Open connection
+	if dbNameEnv != "" {
+		// Use explicitly provided DB_NAME as first choice
+		dbNames = append(dbNames, dbNameEnv)
+	} else if env != "" {
+		// Try environment-specific database name
+		dbNames = append(dbNames, fmt.Sprintf("trace-demo-%s", env))
+	}
+
+	// Always add postgres as fallback
+	dbNames = append(dbNames, "postgres")
+
+	var db *sql.DB
 	var err error
-	db, err = sql.Open("postgres", connStr)
-	if err != nil {
-		return fmt.Errorf("failed to open database connection: %w", err)
+	var connectedDb string
+
+	// Try connecting to each database in order
+	for _, dbName := range dbNames {
+		// Create connection string
+		connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+			dbHost, dbPort, dbUser, dbPassword, dbName)
+
+		fmt.Printf("Trying to connect to PostgreSQL at %s:%s/%s as %s\n", dbHost, dbPort, dbName, dbUser)
+
+		// Try to connect
+		tempDb, err := sql.Open("postgres", connStr)
+		if err != nil {
+			fmt.Printf("Failed to open connection to %s: %v\n", dbName, err)
+			continue
+		}
+
+		// Test connection
+		err = tempDb.Ping()
+		if err != nil {
+			fmt.Printf("Failed to ping database %s: %v\n", dbName, err)
+			_ = tempDb.Close()
+			continue
+		}
+
+		// Connection successful
+		db = tempDb
+		connectedDb = dbName
+		fmt.Printf("Successfully connected to PostgreSQL database: %s\n", connectedDb)
+		break
 	}
 
-	// Test connection
-	err = db.Ping()
-	if err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
+	// If all connection attempts failed
+	if db == nil {
+		return fmt.Errorf("failed to connect to any database: %w", err)
 	}
 
-	fmt.Println("Successfully connected to PostgreSQL")
+	// We're now connected to a database
 
-	// Create requests table if it doesn't exist
-	_, err = db.Exec(`
+	// Try to create the requests table if it doesn't exist
+	_, err = db.Exec(fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS requests (
 			id SERIAL PRIMARY KEY,
 			path TEXT NOT NULL,
@@ -149,12 +182,18 @@ func initDB() error {
 			user_agent TEXT,
 			timestamp TIMESTAMPTZ DEFAULT NOW()
 		)
-	`)
+	`))
+
 	if err != nil {
-		return fmt.Errorf("failed to create requests table: %w", err)
+		fmt.Printf("Warning: Failed to create requests table: %v\n", err)
+		fmt.Println("Attempting to continue anyway...")
+	} else {
+		fmt.Println("Database schema initialized or verified")
+
 	}
 
-	fmt.Println("Database schema initialized")
+	// At this point we have a working database connection
+	fmt.Println("PostgreSQL initialization complete")
 
 	return nil
 }
