@@ -53,7 +53,7 @@ jobs:
   #     app-url: "https://stg.trace-demo.fullstack.pw"
 
   prod-deploy:
-    needs: stg-cypress-tests
+    needs: stg-deploy
     name: PROD deploy
     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
     with:
