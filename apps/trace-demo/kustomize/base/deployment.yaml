@@ -12,27 +12,6 @@ spec:
       labels:
         app: trace-demo
     spec:
-      initContainers:
-        - name: check-db-ready
-          image: postgres:15-alpine
-          command:
-            [
-              "sh",
-              "-c",
-              "until pg_isready -h $DB_HOST -p $DB_PORT -U $DB_USER; do echo Waiting for database; sleep 2; done;",
-            ]
-          env:
-            - name: DB_HOST
-              value: postgres.fullstack.pw
-            - name: DB_PORT
-              value: "5432"
-            - name: DB_USER
-              value: admin
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cluster-secrets
-                  key: POSTGRES_PASSWORD
       containers:
         - name: trace-demo
           image: registry.fullstack.pw/trace-demo:latest

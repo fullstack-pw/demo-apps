@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -24,8 +25,25 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// Global database connection
-var db *sql.DB
+// Global database connection with mutex for thread safety
+var (
+	db   *sql.DB
+	dbMu sync.RWMutex
+)
+
+// getSafeDB provides thread-safe access to the database connection
+func getSafeDB() *sql.DB {
+	dbMu.RLock()
+	defer dbMu.RUnlock()
+	return db
+}
+
+// setSafeDB provides thread-safe method to set database connection
+func setSafeDB(newDB *sql.DB) {
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	db = newDB
+}
 
 // initTracer initializes the OpenTelemetry tracer
 func initTracer() (*sdktrace.TracerProvider, error) {
@@ -90,116 +108,100 @@ func initTracer() (*sdktrace.TracerProvider, error) {
 
 // initDB initializes the PostgreSQL connection
 func initDB() error {
-	fmt.Println("Initializing PostgreSQL connection...")
+	fmt.Println("🔍 Initializing PostgreSQL connection...")
 
-	// Get database connection details from environment variables
-	dbHost := os.Getenv("DB_HOST")
-	if dbHost == "" {
-		dbHost = "postgres.default.svc.cluster.local"
+	// Database connection parameters with sensible defaults
+	dbParams := map[string]string{
+		"host":     os.Getenv("DB_HOST"),
+		"port":     os.Getenv("DB_PORT"),
+		"user":     os.Getenv("DB_USER"),
+		"password": os.Getenv("DB_PASSWORD"),
+		"dbname":   os.Getenv("DB_NAME"),
 	}
 
-	dbPort := os.Getenv("DB_PORT")
-	if dbPort == "" {
-		dbPort = "5432"
+	// Set default values if not provided
+	if dbParams["host"] == "" {
+		dbParams["host"] = "postgres.fullstack.pw"
+	}
+	if dbParams["port"] == "" {
+		dbParams["port"] = "5432"
+	}
+	if dbParams["user"] == "" {
+		dbParams["user"] = "admin"
+	}
+	if dbParams["dbname"] == "" {
+		dbParams["dbname"] = "postgres"
 	}
 
-	dbUser := os.Getenv("DB_USER")
-	if dbUser == "" {
-		dbUser = "admin"
-	}
+	// Construct connection string
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		dbParams["host"], dbParams["port"], dbParams["user"], dbParams["password"], dbParams["dbname"],
+	)
 
-	dbPassword := os.Getenv("DB_PASSWORD")
-	if dbPassword == "" {
-		fmt.Println("Warning: DB_PASSWORD not set, using empty password")
-	}
+	// Multiple connection attempts with exponential backoff
+	maxRetries := 5
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		fmt.Printf("Attempt %d: Connecting to PostgreSQL at %s:%s/%s\n",
+			attempt, dbParams["host"], dbParams["port"], dbParams["dbname"])
 
-	// Get environment-specific database name or fallback to default
-	env := os.Getenv("ENV")
-	dbNameEnv := os.Getenv("DB_NAME")
-
-	// First try with environment-specific database if ENV is set
-	var dbNames []string
-
-	if dbNameEnv != "" {
-		// Use explicitly provided DB_NAME as first choice
-		dbNames = append(dbNames, dbNameEnv)
-	} else if env != "" {
-		// Try environment-specific database name
-		dbNames = append(dbNames, fmt.Sprintf("trace-demo-%s", env))
-	}
-
-	// Always add postgres as fallback
-	dbNames = append(dbNames, "postgres")
-
-	var db *sql.DB
-	var err error
-	var connectedDb string
-
-	// Try connecting to each database in order
-	for _, dbName := range dbNames {
-		// Create connection string
-		connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-			dbHost, dbPort, dbUser, dbPassword, dbName)
-
-		fmt.Printf("Trying to connect to PostgreSQL at %s:%s/%s as %s\n", dbHost, dbPort, dbName, dbUser)
-
-		// Try to connect
-		tempDb, err := sql.Open("postgres", connStr)
+		// Attempt database connection
+		tempDB, err := sql.Open("postgres", connStr)
 		if err != nil {
-			fmt.Printf("Failed to open connection to %s: %v\n", dbName, err)
+			fmt.Printf("❌ Connection configuration error: %v\n", err)
+			if attempt == maxRetries {
+				return fmt.Errorf("failed to configure database connection after %d attempts", maxRetries)
+			}
+			time.Sleep(time.Duration(attempt*2) * time.Second)
 			continue
 		}
 
-		// Test connection
-		err = tempDb.Ping()
+		// Test the connection
+		err = tempDB.Ping()
 		if err != nil {
-			fmt.Printf("Failed to ping database %s: %v\n", dbName, err)
-			_ = tempDb.Close()
+			fmt.Printf("❌ Database ping failed: %v\n", err)
+			_ = tempDB.Close()
+			if attempt == maxRetries {
+				return fmt.Errorf("failed to ping database after %d attempts", maxRetries)
+			}
+			time.Sleep(time.Duration(attempt*2) * time.Second)
 			continue
 		}
 
 		// Connection successful
-		db = tempDb
-		connectedDb = dbName
-		fmt.Printf("Successfully connected to PostgreSQL database: %s\n", connectedDb)
-		break
+		setSafeDB(tempDB)
+		fmt.Printf("✅ Successfully connected to PostgreSQL at %s:%s/%s\n",
+			dbParams["host"], dbParams["port"], dbParams["dbname"])
+
+		// Create requests table if not exists
+		_, err = tempDB.Exec(`
+			CREATE TABLE IF NOT EXISTS requests (
+				id SERIAL PRIMARY KEY,
+				path TEXT NOT NULL,
+				method TEXT NOT NULL,
+				remote_addr TEXT,
+				user_agent TEXT,
+				timestamp TIMESTAMPTZ DEFAULT NOW()
+			)
+		`)
+		if err != nil {
+			fmt.Printf("⚠️ Warning: Failed to ensure requests table: %v\n", err)
+		}
+
+		return nil
 	}
 
-	// If all connection attempts failed
-	if db == nil {
-		return fmt.Errorf("failed to connect to any database: %w", err)
-	}
-
-	// We're now connected to a database
-
-	// Try to create the requests table if it doesn't exist
-	_, err = db.Exec(fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS requests (
-			id SERIAL PRIMARY KEY,
-			path TEXT NOT NULL,
-			method TEXT NOT NULL,
-			remote_addr TEXT,
-			user_agent TEXT,
-			timestamp TIMESTAMPTZ DEFAULT NOW()
-		)
-	`))
-
-	if err != nil {
-		fmt.Printf("Warning: Failed to create requests table: %v\n", err)
-		fmt.Println("Attempting to continue anyway...")
-	} else {
-		fmt.Println("Database schema initialized or verified")
-
-	}
-
-	// At this point we have a working database connection
-	fmt.Println("PostgreSQL initialization complete")
-
-	return nil
+	return fmt.Errorf("exhausted all connection attempts to PostgreSQL")
 }
 
 // insertRequest inserts request data into PostgreSQL with tracing
 func insertRequest(ctx context.Context, path, method, remoteAddr, userAgent string) error {
+	// Safety check for database connection
+	currentDB := getSafeDB()
+	if currentDB == nil {
+		return fmt.Errorf("database connection is not initialized")
+	}
+
 	// Create a child span for the database operation
 	tracer := otel.Tracer("trace-demo")
 	ctx, span := tracer.Start(ctx, "db.insert_request", trace.WithAttributes(
@@ -207,36 +209,56 @@ func insertRequest(ctx context.Context, path, method, remoteAddr, userAgent stri
 		attribute.String("db.operation", "insert"),
 		attribute.String("db.table", "requests"),
 	))
-	defer span.End()
+	defer func() {
+		if span != nil {
+			span.End()
+		}
+	}()
 
-	// Record the request details in span attributes
-	span.SetAttributes(
-		attribute.String("http.path", path),
-		attribute.String("http.method", method),
-		attribute.String("http.remote_addr", remoteAddr),
-		attribute.String("http.user_agent", userAgent),
-	)
+	// Safely handle potential nil span
+	if span == nil {
+		fmt.Println("Warning: Span is nil, cannot record detailed tracing information")
+	} else {
+		// Record the request details in span attributes
+		span.SetAttributes(
+			attribute.String("http.path", path),
+			attribute.String("http.method", method),
+			attribute.String("http.remote_addr", remoteAddr),
+			attribute.String("http.user_agent", userAgent),
+		)
+	}
 
-	// Prepare the query
+	// Prepare the query with context
 	query := `
 		INSERT INTO requests (path, method, remote_addr, user_agent)
 		VALUES ($1, $2, $3, $4)
 		RETURNING id
 	`
 
-	// Execute the query
+	// Execute the query with robust error handling
 	var id int
-	err := db.QueryRowContext(ctx, query, path, method, remoteAddr, userAgent).Scan(&id)
+	err := currentDB.QueryRowContext(ctx, query, path, method, remoteAddr, userAgent).Scan(&id)
 	if err != nil {
-		// Record the error in the span
-		span.RecordError(err)
-		span.SetStatus(codes.Error, err.Error())
+		// More detailed error logging
+		fmt.Printf("Database insertion error: %v\n", err)
+
+		// Record error in span if possible
+		if span != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+
 		return fmt.Errorf("failed to insert request: %w", err)
 	}
 
-	// Record success and the inserted ID
-	span.SetAttributes(attribute.Int("db.request.id", id))
-	span.SetStatus(codes.Ok, "Request inserted successfully")
+	// Log successful insertion
+	fmt.Printf("Request inserted successfully with ID: %d\n", id)
+
+	// Record success in span
+	if span != nil {
+		span.SetAttributes(attribute.Int("db.request.id", id))
+		span.SetStatus(codes.Ok, "Request inserted successfully")
+	}
 
 	return nil
 }
