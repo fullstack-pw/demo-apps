@@ -2,16 +2,20 @@ FROM golang:1.23.1 AS builder
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first to leverage Docker caching
-COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
-
-# Copy the application source code
+# Copy source code
 COPY . .
 
-# Build the application with proper settings for tracing
+# Initialize Go module and set up dependencies
+RUN go mod init trace-demo \
+    && go mod edit -require github.com/lib/pq@v1.10.9 \
+    && go mod edit -require go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp@v0.60.0 \
+    && go mod edit -require go.opentelemetry.io/otel@v1.35.0 \
+    && go mod edit -require go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc@v1.35.0 \
+    && go mod edit -require go.opentelemetry.io/otel/sdk@v1.35.0 \
+    && go mod tidy \
+    && go mod download
+
+# Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -o trace-demo .
 
 # Use a smaller base image for the final image
