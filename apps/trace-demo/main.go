@@ -194,6 +194,13 @@ func initDB() error {
 	return fmt.Errorf("exhausted all connection attempts to PostgreSQL")
 }
 
+func getTraceID(ctx context.Context) string {
+	if span := trace.SpanFromContext(ctx); span != nil {
+		return span.SpanContext().TraceID().String()
+	}
+	return "unknown"
+}
+
 // insertRequest inserts request data into PostgreSQL with tracing
 func insertRequest(ctx context.Context, path, method, remoteAddr, userAgent string) error {
 	// Safety check for database connection
@@ -214,7 +221,6 @@ func insertRequest(ctx context.Context, path, method, remoteAddr, userAgent stri
 			span.End()
 		}
 	}()
-
 	// Safely handle potential nil span
 	if span == nil {
 		fmt.Println("Warning: Span is nil, cannot record detailed tracing information")
@@ -251,8 +257,7 @@ func insertRequest(ctx context.Context, path, method, remoteAddr, userAgent stri
 		return fmt.Errorf("failed to insert request: %w", err)
 	}
 
-	// Log successful insertion
-	fmt.Printf("Request inserted successfully with ID: %d\n", id)
+	fmt.Printf("TraceID=%s Request inserted successfully with ID: %d\n", getTraceID(ctx), id)
 
 	// Record success in span
 	if span != nil {
@@ -329,11 +334,11 @@ func main() {
 	// Create instrumented handlers
 	helloHandler := otelhttp.NewHandler(
 		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			fmt.Printf("Handling request: %s %s\n", r.Method, r.URL.Path)
 
 			// Create a span
 			ctx, span := tracer.Start(r.Context(), "hello-operation")
 			defer span.End()
+			fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
 
 			// Record incoming request details
 			span.SetAttributes(
@@ -361,7 +366,7 @@ func main() {
 			}
 
 			span.SetStatus(codes.Ok, "Request handled successfully")
-			fmt.Printf("Request handled successfully: %s %s\n", r.Method, r.URL.Path)
+			fmt.Printf("TraceID=%s Request handled successfully: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
 		}),
 		"hello-handler",
 	)
