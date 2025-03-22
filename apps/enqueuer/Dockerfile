@@ -1,31 +1,17 @@
-FROM golang:1.23.1 AS builder
+FROM golang:1.23.1
 
 WORKDIR /app
 
-# Copy go.mod and go.sum
-COPY go.mod ./
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY main.go go.mod go.sum ./
 
 # Download dependencies
 RUN go mod tidy
 
-# Copy the source code
-COPY . .
-
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o enqueuer .
+RUN go build -o main .
 
-# Use a minimal alpine image for the final stage
-FROM alpine:3.19
-
-WORKDIR /app
-
-# Install CA certificates for HTTPS connections
-RUN apk --no-cache add ca-certificates
-
-# Copy the binary from the builder stage
-COPY --from=builder /app/enqueuer .
-
-# Expose the application port
+# Expose port 8080
 EXPOSE 8080
 
 # Run the application
