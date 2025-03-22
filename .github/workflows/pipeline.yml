@@ -61,8 +61,8 @@ jobs:
           done
 
           # Format as JSON arrays for GitHub Actions
-          PATHS_JSON=$(printf '%s\n' "${APPS_PATHS[@]}" | jq -R . | jq -s .)
-          NAMES_JSON=$(printf '%s\n' "${APPS_NAMES[@]}" | jq -R . | jq -s .)
+          PATHS_JSON=$(printf '%s\n' "${APPS_PATHS[@]}" | jq -R . | jq -s . | jq -c .)
+          NAMES_JSON=$(printf '%s\n' "${APPS_NAMES[@]}" | jq -R . | jq -s . | jq -c .)
 
           echo "App paths: $PATHS_JSON"
           echo "App names: $NAMES_JSON"
