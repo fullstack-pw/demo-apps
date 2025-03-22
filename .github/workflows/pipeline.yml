@@ -77,15 +77,10 @@ jobs:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
         app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
-    runs-on: self-hosted
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Run Go tests
-        uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
-        with:
-          go-dir: ./${{ matrix.app_path }}
+    name: GO Tests for ${{ matrix.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+    with:
+      go-dir: ./${{ matrix.app_path }}
 
   docker-build-and-push:
     needs: [determine-app, go-tests]
