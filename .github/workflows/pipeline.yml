@@ -76,7 +76,7 @@ jobs:
     strategy:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
-        app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
+        # app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
     name: GO Tests for ${{ matrix.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
     with:
@@ -88,7 +88,7 @@ jobs:
     strategy:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
-        app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
+        # app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
     name: Build and Push ${{ matrix.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
     with:
@@ -101,7 +101,7 @@ jobs:
     strategy:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
-        app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
+        # app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
     name: DEV deploy ${{ matrix.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
     with:
@@ -115,7 +115,7 @@ jobs:
     strategy:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
-        app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
+        # app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
     name: STG deploy ${{ matrix.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
     with:
@@ -129,7 +129,7 @@ jobs:
     strategy:
       matrix:
         app_path: ${{ fromJson(needs.determine-app.outputs.app_paths) }}
-        app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
+        # app_name: ${{ fromJson(needs.determine-app.outputs.app_names) }}
     name: PROD deploy ${{ matrix.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
     with:
