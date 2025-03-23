@@ -264,6 +264,10 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		attribute.String("message.content", content),
 		attribute.Int("headers.count", len(headers)),
 	)
+	traceID := getTraceID(ctx)
+	span.SetAttributes(attribute.String("trace.id", traceID))
+
+	fmt.Printf("TraceID=%s Starting PostgreSQL write for id: %s\n", traceID, id)
 
 	// Prepare headers as JSONB
 	headersJSON := "{}"
@@ -288,18 +292,19 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 
 	// Prepare the SQL query
 	query := `
-        INSERT INTO messages (id, content, source, headers)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO messages (id, content, source, headers, trace_id)
+        VALUES ($1, $2, $3, $4, $5)
         ON CONFLICT (id) DO UPDATE
         SET content = EXCLUDED.content,
             headers = EXCLUDED.headers,
+            trace_id = EXCLUDED.trace_id,
             created_at = NOW()
     `
 	fmt.Printf("Executing query: %s with values id=%s, content=%s, source=redis, headers=%s\n",
 		query, id, content, headersJSON)
 
 	// Execute the query
-	_, err := postgresDB.ExecContext(ctx, query, id, content, "redis", headersJSON)
+	_, err := postgresDB.ExecContext(ctx, query, id, content, "redis", headersJSON, traceID)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to insert message")
@@ -316,7 +321,21 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 // processRedisMessage processes a message from Redis with tracing
 func processRedisMessage(ctx context.Context, key string, value string) error {
 	// Create a span for processing the Redis message
-	ctx, span := tracer.Start(ctx, "redis.process_message", trace.WithAttributes(
+	var parentCtx context.Context = ctx
+	var message RedisMessage
+
+	if err := json.Unmarshal([]byte(value), &message); err == nil && message.Headers != nil {
+		// Extract trace context from headers if present
+		carrier := propagation.MapCarrier(message.Headers)
+		extractedCtx := otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+		if extractedCtx != nil {
+			parentCtx = extractedCtx
+			fmt.Printf("Extracted trace context from Redis message\n")
+		}
+	}
+
+	// Start new span as child of the extracted context
+	ctx, span := tracer.Start(parentCtx, "redis.process_message", trace.WithAttributes(
 		attribute.String("redis.key", key),
 	))
 	defer span.End()
@@ -325,7 +344,6 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		getTraceID(ctx), key, value)
 
 	// Try to parse the message as JSON
-	var message RedisMessage
 	var headers map[string]string
 	var content string
 	var id string
