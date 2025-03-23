@@ -5,23 +5,23 @@ patches:
   - patch: |-
       - op: replace
         path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "trace-demo.fullstack.pw"
+        value: "dev.writer.fullstack.pw"
       - op: replace
         path: /spec/tls/0/hosts/0
-        value: "trace-demo.fullstack.pw"
+        value: "dev.writer.fullstack.pw"
       - op: replace
         path: /spec/rules/0/host
-        value: "trace-demo.fullstack.pw"
+        value: "dev.writer.fullstack.pw"
     target:
       kind: Ingress
-      name: trace-demo
+      name: writer
   - patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/env/0/value
-        value: "prod"
+        value: "dev"
       - op: replace
-        path: /spec/template/spec/containers/0/env/4/value
-        value: "trace_demo_prod"
+        path: /spec/template/spec/containers/0/env/2/value
+        value: "queue-dev"
     target:
       kind: Deployment
-      name: trace-demo
+      name: writer
