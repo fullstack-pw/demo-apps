@@ -258,32 +258,35 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 	))
 	defer span.End()
 
+	fmt.Printf("TraceID=%s Starting PostgreSQL write for id: %s\n", getTraceID(ctx), id)
+
 	span.SetAttributes(
 		attribute.String("message.content", content),
 		attribute.Int("headers.count", len(headers)),
 	)
 
-	// Prepare headers as JSONB if provided
+	// Prepare headers as JSONB
 	headersJSON := "{}"
 	if len(headers) > 0 {
-		// This is a simple conversion - in a real system you'd want to properly
-		// escape and handle JSON conversion
 		headersBytes, err := json.Marshal(headers)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, "Failed to serialize headers")
+			fmt.Printf("Failed to serialize headers: %v\n", err)
 			return fmt.Errorf("failed to serialize headers: %w", err)
 		}
 		headersJSON = string(headersBytes)
+		fmt.Printf("Serialized headers: %s\n", headersJSON)
 	}
 
-	// If ID is empty, generate one based on timestamp
+	// If ID is empty, generate one
 	if id == "" {
 		id = fmt.Sprintf("gen-%d", time.Now().UnixNano())
 		span.SetAttributes(attribute.String("generated.id", id))
+		fmt.Printf("Generated ID: %s\n", id)
 	}
 
-	// Execute INSERT query with ON CONFLICT clause for upsert behavior
+	// Prepare the SQL query
 	query := `
         INSERT INTO messages (id, content, source, headers)
         VALUES ($1, $2, $3, $4)
@@ -292,16 +295,21 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
             headers = EXCLUDED.headers,
             created_at = NOW()
     `
+	fmt.Printf("Executing query: %s with values id=%s, content=%s, source=redis, headers=%s\n",
+		query, id, content, headersJSON)
 
+	// Execute the query
 	_, err := postgresDB.ExecContext(ctx, query, id, content, "redis", headersJSON)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to insert message")
+		fmt.Printf("Database error: %v\n", err)
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
 	span.SetStatus(codes.Ok, "Message inserted successfully")
-	fmt.Printf("TraceID=%s Message with ID '%s' written to PostgreSQL\n", getTraceID(ctx), id)
+	fmt.Printf("TraceID=%s Message with ID '%s' successfully written to PostgreSQL\n",
+		getTraceID(ctx), id)
 	return nil
 }
 
@@ -313,7 +321,8 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 	))
 	defer span.End()
 
-	fmt.Printf("TraceID=%s Processing Redis message with key: %s\n", getTraceID(ctx), key)
+	fmt.Printf("TraceID=%s Processing Redis message with key: %s, value: %s\n",
+		getTraceID(ctx), key, value)
 
 	// Try to parse the message as JSON
 	var message RedisMessage
@@ -324,11 +333,13 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 	err := json.Unmarshal([]byte(value), &message)
 	if err != nil {
 		// If not valid JSON, use the raw value as content
+		fmt.Printf("Message is not valid JSON, using raw value: %v\n", err)
 		span.SetAttributes(attribute.Bool("message.is_json", false))
 		content = value
 		id = strings.TrimPrefix(key, "msg:")
 	} else {
 		// Valid JSON message
+		fmt.Printf("Successfully parsed JSON message: %+v\n", message)
 		span.SetAttributes(attribute.Bool("message.is_json", true))
 		content = message.Content
 		headers = message.Headers
@@ -339,13 +350,13 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 	}
 
 	// Write to PostgreSQL
+	fmt.Printf("Writing to PostgreSQL with id: %s, content: %s\n", id, content)
 	err = writeToPostgres(ctx, id, content, headers)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to write to PostgreSQL")
 		return fmt.Errorf("failed to write to PostgreSQL: %w", err)
 	}
-
 	// Delete the key from Redis after successful processing
 	err = redisClient.Del(ctx, key).Err()
 	if err != nil {
@@ -391,15 +402,33 @@ func subscribeToRedisChanges(ctx context.Context) {
 			return
 		case msg, ok := <-ch:
 			fmt.Printf("Received message from Redis channel: %v (ok: %v)\n", msg, ok)
-			// Extract the key from the message
-			parts := strings.Split(msg.Payload, ":")
-			if len(parts) < 2 {
+
+			// Extract the actual key from the channel pattern
+			// The channel will be in format "__keyspace@0__:msg:12345" or "__keyevent@0__:set"
+			var key string
+
+			if strings.Contains(msg.Channel, "__keyspace@0__:") {
+				// For keyspace events, the key is in the channel name
+				key = strings.TrimPrefix(msg.Channel, "__keyspace@0__:")
+				fmt.Printf("Extracted key from keyspace event: %s\n", key)
+			} else if strings.Contains(msg.Channel, "__keyevent@0__:") {
+				// For keyevent notifications, the key is in the payload
+				key = msg.Payload
+				fmt.Printf("Extracted key from keyevent: %s\n", key)
+			} else {
+				fmt.Printf("Unknown channel format: %s\n", msg.Channel)
 				continue
 			}
-			key := parts[1]
 
+			// Only process 'set' operations for keyspace events
+			if strings.Contains(msg.Channel, "__keyspace@0__:") && msg.Payload != "set" {
+				fmt.Printf("Ignoring non-set operation: %s\n", msg.Payload)
+				continue
+			}
+
+			// Only process keys with our prefix
 			if !strings.HasPrefix(key, "msg:") {
-				// Skip keys that don't match our pattern
+				fmt.Printf("Ignoring key without msg: prefix: %s\n", key)
 				continue
 			}
 
@@ -407,7 +436,10 @@ func subscribeToRedisChanges(ctx context.Context) {
 			processCtx, span := tracer.Start(ctx, "redis.keyspace_event",
 				trace.WithAttributes(attribute.String("redis.key", key)))
 
-			// Retrieve the value for this key
+			// Add debug output
+			fmt.Printf("Processing key: %s\n", key)
+
+			// Get the value from Redis
 			val, err := redisClient.Get(processCtx, key).Result()
 			if err != nil {
 				span.RecordError(err)
@@ -417,6 +449,8 @@ func subscribeToRedisChanges(ctx context.Context) {
 				continue
 			}
 
+			fmt.Printf("Retrieved value for key %s: %s\n", key, val)
+
 			// Process the message
 			err = processRedisMessage(processCtx, key, val)
 			if err != nil {
@@ -425,6 +459,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 				fmt.Printf("Error processing message for key '%s': %v\n", key, err)
 			} else {
 				span.SetStatus(codes.Ok, "Message processed successfully")
+				fmt.Printf("Successfully processed message for key '%s'\n", key)
 			}
 			span.End()
 		}
