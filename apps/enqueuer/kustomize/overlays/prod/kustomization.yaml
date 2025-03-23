@@ -5,20 +5,20 @@ patches:
   - patch: |-
       - op: replace
         path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "stg.enqueuer.fullstack.pw"
+        value: "enqueuer.fullstack.pw"
       - op: replace
         path: /spec/tls/0/hosts/0
-        value: "stg.enqueuer.fullstack.pw"
+        value: "enqueuer.fullstack.pw"
       - op: replace
         path: /spec/rules/0/host
-        value: "stg.enqueuer.fullstack.pw"
+        value: "enqueuer.fullstack.pw"
     target:
       kind: Ingress
       name: enqueuer
   - patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/env/2/value
-        value: "stg"
+        value: "prod"
     target:
       kind: Deployment
       name: enqueuer
