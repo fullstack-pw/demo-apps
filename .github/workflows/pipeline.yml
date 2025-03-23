@@ -20,8 +20,7 @@ jobs:
   determine-app:
     runs-on: self-hosted
     outputs:
-      app_paths: ${{ steps.find-apps.outputs.app_paths }}
-      app_names: ${{ steps.find-apps.outputs.app_names }}
+      apps: ${{ steps.find-apps.outputs.apps }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,7 +46,7 @@ jobs:
               APP_NAME=$(echo $FILE | cut -d'/' -f2)
               
               # Check if this app is already in the list
-              if [[ ! " ${APPS[@]} " =~ " ${APP_PATH} " ]]; then
+              if [[ ! " ${APPS[@]} " =~ "{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}" ]]; then
                 APPS+=("{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}")
               fi
             fi
