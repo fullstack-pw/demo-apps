@@ -17,11 +17,24 @@ kind: Ingress
 metadata:
   name: enqueuer
   annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
     external-dns.alpha.kubernetes.io/hostname: "dev.enqueuer.fullstack.pw"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
+  ingressClassName: "traefik"
   tls:
     - hosts:
         - "dev.enqueuer.fullstack.pw"
       secretName: enqueuer-tls
   rules:
-    - host: dev.enqueuer.fullstack.pw
+    - host: "dev.enqueuer.fullstack.pw"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: enqueuer
+                port:
+                  number: 80
