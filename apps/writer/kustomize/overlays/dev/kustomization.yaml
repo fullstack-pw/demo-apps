@@ -1,0 +1,27 @@
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: "dev.writer.fullstack.pw"
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "dev.writer.fullstack.pw"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "dev.writer.fullstack.pw"
+    target:
+      kind: Ingress
+      name: writer
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0/value
+        value: "dev"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: "queue-dev"
+    target:
+      kind: Deployment
+      name: writer

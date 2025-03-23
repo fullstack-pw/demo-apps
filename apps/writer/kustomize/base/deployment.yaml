@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: writer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: writer
+  template:
+    metadata:
+      labels:
+        app: writer
+    spec:
+      containers:
+        - name: writer
+          image: registry.fullstack.pw/writer:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENV
+              value: "env"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: opentelemetry-collector.observability.svc.cluster.local:4317
+            - name: QUEUE_NAMES
+              value: "test-queue"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cluster-secrets
+                  key: REDIS_PASSWORD
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: cluster-secrets
+                  key: POSTGRES_PASSWORD
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
