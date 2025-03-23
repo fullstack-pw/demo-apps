@@ -1,0 +1,121 @@
+name: Multi-App CI/CD Pipeline
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - "apps/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/**"
+
+jobs:
+  determine-app:
+    runs-on: self-hosted
+    outputs:
+      apps: ${{ steps.find-apps.outputs.apps }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find changed apps
+        id: find-apps
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # For push events, get changed files from the commit
+            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
+          else
+            # For PR events, get changed files in the PR
+            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD)
+          fi
+
+          APPS=()
+
+          for FILE in $CHANGED_FILES; do
+            if [[ $FILE == apps/* ]]; then
+              APP_PATH=$(echo $FILE | cut -d'/' -f1-2)
+              APP_NAME=$(echo $FILE | cut -d'/' -f2)
+              
+              # Check if this app is already in the list
+              if [[ ! " ${APPS[@]} " =~ "{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}" ]]; then
+                APPS+=("{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}")
+              fi
+            fi
+          done
+
+          # Format as JSON array for GitHub Actions
+          APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
+
+          echo "Apps: $APPS_JSON"
+          echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
+
+  go-tests:
+    needs: determine-app
+    if: needs.determine-app.outputs.app_paths != '[]'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: GO Tests for ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+    with:
+      go-dir: ./${{ matrix.app.app_path }}
+
+  docker-build-and-push:
+    needs: [determine-app, go-tests]
+    if: needs.determine-app.outputs.app_paths != '[]'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: Build and Push ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
+    with:
+      app-context: "./${{ matrix.app.app_path }}"
+      app-name: "${{ matrix.app.app_name }}"
+
+  dev-deploy:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.app_paths != '[]'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: DEV deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/dev"
+      context: "dev"
+      app-name: ${{ matrix.app.app_name }}
+
+  stg-deploy:
+    needs: [determine-app, dev-deploy]
+    if: needs.determine-app.outputs.app_paths != '[]'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: STG deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
+      context: "stg"
+      app-name: ${{ matrix.app.app_name }}
+
+  prod-deploy:
+    needs: [determine-app, stg-deploy]
+    if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: PROD deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
+      context: "prod"
+      app-name: ${{ matrix.app.app_name }}

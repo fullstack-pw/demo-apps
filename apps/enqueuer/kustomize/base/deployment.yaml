@@ -1,40 +1,29 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: trace-demo
+  name: enqueuer
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: trace-demo
+      app: enqueuer
   template:
     metadata:
       labels:
-        app: trace-demo
+        app: enqueuer
     spec:
       containers:
-        - name: trace-demo
-          image: registry.fullstack.pw/trace-demo:latest
+        - name: enqueuer
+          image: registry.fullstack.pw/enqueuer:latest
           ports:
             - containerPort: 8080
           env:
-            - name: ENV
-              value: env
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: opentelemetry-collector.observability.svc.cluster.local:4317
-            - name: DB_HOST
-              value: postgres.fullstack.pw
-            - name: DB_PORT
-              value: "5432"
-            - name: DB_NAME
-              value: postgres
-            - name: DB_USER
-              value: admin
-            - name: DB_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: cluster-secrets
-                  key: POSTGRES_PASSWORD
+            - name: NATS_URL
+              value: nats.fullstack.pw:4222
+            - name: ENV
+              value: "env"
           resources:
             limits:
               cpu: 200m
