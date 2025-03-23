@@ -366,8 +366,9 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 // pollRedis periodically polls Redis for new messages
 // Replace the pollRedis function with this
 func subscribeToRedisChanges(ctx context.Context) {
+
 	// Set up a Redis subscription to keyspace notifications
-	pubsub := redisClient.PSubscribe(ctx, "__keyevent@0__:set", "__keyevent@0__:hset")
+	pubsub := redisClient.PSubscribe(ctx, "__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg:*")
 	defer pubsub.Close()
 
 	// Enable keyspace notifications on the Redis server (only needs to be done once)
@@ -380,7 +381,6 @@ func subscribeToRedisChanges(ctx context.Context) {
 		// pollRedis(ctx, 2*time.Second)
 		return
 	}
-
 	fmt.Println("Listening for Redis keyspace notifications...")
 
 	// Process messages from the subscription channel
@@ -389,7 +389,8 @@ func subscribeToRedisChanges(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case msg := <-ch:
+		case msg, ok := <-ch:
+			fmt.Printf("Received message from Redis channel: %v (ok: %v)\n", msg, ok)
 			// Extract the key from the message
 			parts := strings.Split(msg.Payload, ":")
 			if len(parts) < 2 {
