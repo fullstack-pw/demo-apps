@@ -1,5 +1,27 @@
 resources:
   - ../../base
 
-patchesStrategicMerge:
-  - patches.yaml
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: "trace-demo.fullstack.pw"
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "trace-demo.fullstack.pw"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "trace-demo.fullstack.pw"
+    target:
+      kind: Ingress
+      name: trace-demo
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/0/value
+        value: "prod"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/4/value
+        value: "trace_demo_prod"
+    target:
+      kind: Deployment
+      name: trace-demo

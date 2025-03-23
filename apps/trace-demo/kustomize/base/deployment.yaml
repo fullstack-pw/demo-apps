@@ -18,6 +18,8 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            - name: ENV
+              value: env
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: opentelemetry-collector.observability.svc.cluster.local:4317
             - name: DB_HOST

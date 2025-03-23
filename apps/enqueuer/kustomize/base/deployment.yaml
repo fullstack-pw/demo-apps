@@ -22,6 +22,8 @@ spec:
               value: opentelemetry-collector.observability.svc.cluster.local:4317
             - name: NATS_URL
               value: nats.fullstack.pw:4222
+            - name: ENV
+              value: "env"
           resources:
             limits:
               cpu: 200m

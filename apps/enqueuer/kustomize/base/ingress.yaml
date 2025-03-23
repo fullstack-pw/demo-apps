@@ -6,16 +6,16 @@ metadata:
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
-    external-dns.alpha.kubernetes.io/hostname: "enqueuer.fullstack.pw"
+    external-dns.alpha.kubernetes.io/hostname: "endpoint"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: "traefik"
   tls:
     - hosts:
-        - "enqueuer.fullstack.pw"
+        - "endpoint"
       secretName: enqueuer-tls
   rules:
-    - host: "enqueuer.fullstack.pw"
+    - host: "endpoint"
       http:
         paths:
           - path: /
