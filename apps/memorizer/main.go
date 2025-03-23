@@ -215,9 +215,27 @@ func storeInRedis(ctx context.Context, id string, content string) error {
 		span.SetAttributes(attribute.String("generated.key", key))
 	}
 
-	// Store in Redis with expiration
+	// Create a message with trace context to store in Redis
+	redisMsg := Message{
+		ID:      id,
+		Content: content,
+		Headers: make(map[string]string),
+	}
+	// Inject current trace context into Redis message headers
+	carrier := propagation.MapCarrier(redisMsg.Headers)
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	// Convert to JSON for storage
+	msgJSON, err := json.Marshal(redisMsg)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to marshal message with trace context")
+		return fmt.Errorf("failed to marshal message with trace context: %w", err)
+	}
+
+	// Store the JSON in Redis instead of raw content
 	expiration := 24 * time.Hour // Keep messages for 24 hours
-	err := redisClient.Set(ctx, key, content, expiration).Err()
+	err = redisClient.Set(ctx, key, string(msgJSON), expiration).Err()
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to store message in Redis")
@@ -232,7 +250,24 @@ func storeInRedis(ctx context.Context, id string, content string) error {
 // handleMessage processes a message from NATS with tracing
 func handleMessage(msg *nats.Msg) {
 	// Create a context and start a span for the message handling
-	ctx, span := tracer.Start(context.Background(), "nats.message.process")
+	// Create a context with the trace from the message headers
+	var parentCtx context.Context
+
+	// Try to unmarshal the message to extract headers
+	var message Message
+	if err := json.Unmarshal(msg.Data, &message); err == nil && message.Headers != nil {
+		// Extract trace context from headers
+		carrier := propagation.MapCarrier(message.Headers)
+		parentCtx = otel.GetTextMapPropagator().Extract(context.Background(), carrier)
+		fmt.Printf("Extracted trace context from message headers\n")
+	} else {
+		// If headers unavailable, use background context
+		parentCtx = context.Background()
+		fmt.Printf("No trace context found in message, starting new trace\n")
+	}
+
+	// Now start the span with the extracted context
+	ctx, span := tracer.Start(parentCtx, "nats.message.process")
 	defer span.End()
 
 	fmt.Printf("TraceID=%s Received message: %s\n", getTraceID(ctx), string(msg.Data))
@@ -244,7 +279,6 @@ func handleMessage(msg *nats.Msg) {
 	)
 
 	// Parse message
-	var message Message
 	if err := json.Unmarshal(msg.Data, &message); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to parse message")
