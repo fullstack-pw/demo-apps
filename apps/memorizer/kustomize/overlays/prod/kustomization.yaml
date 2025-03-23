@@ -5,20 +5,23 @@ patches:
   - patch: |-
       - op: replace
         path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "enqueuer.fullstack.pw"
+        value: "memorizer.fullstack.pw"
       - op: replace
         path: /spec/tls/0/hosts/0
-        value: "enqueuer.fullstack.pw"
+        value: "memorizer.fullstack.pw"
       - op: replace
         path: /spec/rules/0/host
-        value: "enqueuer.fullstack.pw"
+        value: "memorizer.fullstack.pw"
     target:
       kind: Ingress
-      name: enqueuer
+      name: memorizer
   - patch: |-
       - op: replace
-        path: /spec/template/spec/containers/0/env/2/value
+        path: /spec/template/spec/containers/0/env/0/value
         value: "prod"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/2/value
+        value: "queue-prod"
     target:
       kind: Deployment
-      name: enqueuer
+      name: memorizer
