@@ -323,7 +323,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 // processRedisMessage processes a message from Redis with tracing
 func processRedisMessage(ctx context.Context, key string, value string) error {
 	// Create a span for processing the Redis message
-	var parentCtx context.Context = ctx
+	var parentCtx = ctx
 	var message RedisMessage
 
 	if err := json.Unmarshal([]byte(value), &message); err == nil && message.Headers != nil {
@@ -400,7 +400,11 @@ func subscribeToRedisChanges(ctx context.Context) {
 
 	// Set up a Redis subscription to keyspace notifications
 	pubsub := redisClient.PSubscribe(ctx, "__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg:*")
-	defer pubsub.Close()
+	defer func() {
+		if err := pubsub.Close(); err != nil {
+			fmt.Printf("Error closing pubsub: %v\n", err)
+		}
+	}()
 
 	// Enable keyspace notifications on the Redis server (only needs to be done once)
 	err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "KA").Err()
@@ -765,7 +769,10 @@ func setupHealthEndpoints() {
 			// Only allow GET requests
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(w, "Method not allowed")
+				_, err := fmt.Fprintf(w, "Method not allowed")
+				if err != nil {
+					fmt.Printf("Error writing response: %v\n", err)
+				}
 				return
 			}
 
@@ -815,7 +822,10 @@ func setupHealthEndpoints() {
 			// Only allow GET requests
 			if r.Method != http.MethodGet {
 				w.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(w, "Method not allowed")
+				_, err := fmt.Fprintf(w, "Method not allowed")
+				if err != nil {
+					fmt.Printf("Error writing response: %v\n", err)
+				}
 				return
 			}
 
@@ -865,7 +875,10 @@ func setupHealthEndpoints() {
 			// Allow DELETE or POST methods
 			if r.Method != http.MethodDelete && r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(w, "Method not allowed")
+				_, err := fmt.Fprintf(w, "Method not allowed")
+				if err != nil {
+					fmt.Printf("Error writing response: %v\n", err)
+				}
 				return
 			}
 
@@ -926,7 +939,10 @@ func setupHealthEndpoints() {
 
 			if r.Method != http.MethodPost {
 				w.WriteHeader(http.StatusMethodNotAllowed)
-				fmt.Fprintf(w, "Method not allowed")
+				_, err := fmt.Fprintf(w, "Method not allowed")
+				if err != nil {
+					fmt.Printf("Error writing response: %v\n", err)
+				}
 				return
 			}
 
@@ -1009,7 +1025,7 @@ func setupHealthEndpoints() {
 			_, err := redisClient.Ping(ctx).Result()
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, writeErr := w.Write([]byte(fmt.Sprintf("Redis connection error: %v", err)))
+				_, writeErr := fmt.Fprintf(w, "Redis connection error: %v", err)
 				if writeErr != nil {
 					fmt.Printf("Error writing Redis check response: %v\n", writeErr)
 				}
