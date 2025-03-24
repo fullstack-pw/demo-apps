@@ -221,14 +221,16 @@ func initPostgres() error {
 
 		// Create messages table if it doesn't exist
 		_, err = postgresDB.Exec(`
-            CREATE TABLE IF NOT EXISTS messages (
-                id VARCHAR(255) PRIMARY KEY,
-                content TEXT NOT NULL,
-                source VARCHAR(255),
-                headers JSONB,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        `)
+			CREATE TABLE IF NOT EXISTS messages (
+				id VARCHAR(255) PRIMARY KEY,
+				content TEXT NOT NULL,
+				source VARCHAR(255),
+				headers JSONB,
+				trace_id VARCHAR(255),
+				span_id VARCHAR(255),
+				created_at TIMESTAMPTZ DEFAULT NOW()
+			)
+		`)
 		if err != nil {
 			fmt.Printf("Warning: Failed to ensure messages table: %v\n", err)
 			return err
@@ -292,14 +294,14 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 
 	// Prepare the SQL query
 	query := `
-        INSERT INTO messages (id, content, source, headers, trace_id)
-        VALUES ($1, $2, $3, $4, $5)
-        ON CONFLICT (id) DO UPDATE
-        SET content = EXCLUDED.content,
-            headers = EXCLUDED.headers,
-            trace_id = EXCLUDED.trace_id,
-            created_at = NOW()
-    `
+		INSERT INTO messages (id, content, source, headers, trace_id)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (id) DO UPDATE
+		SET content = EXCLUDED.content,
+			headers = EXCLUDED.headers,
+			trace_id = EXCLUDED.trace_id,
+			created_at = NOW()
+	`
 	fmt.Printf("Executing query: %s with values id=%s, content=%s, source=redis, headers=%s\n",
 		query, id, content, headersJSON)
 
@@ -587,9 +589,398 @@ func main() {
 	// Context cancellation will stop the polling
 }
 
+// Query a message from PostgreSQL by ID
+func queryMessageByID(ctx context.Context, id string) (map[string]interface{}, error) {
+	ctx, span := tracer.Start(ctx, "pg.query_message_by_id")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("message.id", id))
+	fmt.Printf("TraceID=%s Querying message with ID: %s\n", getTraceID(ctx), id)
+
+	query := `
+        SELECT id, content, source, headers, created_at, 
+               trace_id, span_id 
+        FROM messages
+        WHERE id = $1
+    `
+
+	var (
+		messageID   string
+		content     string
+		source      string
+		headersJSON string
+		createdAt   time.Time
+		traceID     sql.NullString
+		spanID      sql.NullString
+	)
+
+	err := postgresDB.QueryRowContext(ctx, query, id).Scan(
+		&messageID, &content, &source, &headersJSON, &createdAt,
+		&traceID, &spanID,
+	)
+
+	if err == sql.ErrNoRows {
+		span.SetStatus(codes.Error, "Message not found")
+		return nil, fmt.Errorf("message with ID %s not found", id)
+	}
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Database query error")
+		return nil, fmt.Errorf("database error: %w", err)
+	}
+
+	// Parse headers JSON if present
+	var headers map[string]string
+	if headersJSON != "" && headersJSON != "{}" {
+		if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
+			span.RecordError(err)
+			fmt.Printf("Warning: failed to parse headers JSON: %v\n", err)
+		}
+	}
+
+	result := map[string]interface{}{
+		"id":         messageID,
+		"content":    content,
+		"source":     source,
+		"created_at": createdAt.Format(time.RFC3339),
+	}
+
+	if headers != nil {
+		result["headers"] = headers
+	}
+
+	if traceID.Valid {
+		result["trace_id"] = traceID.String
+	}
+
+	if spanID.Valid {
+		result["span_id"] = spanID.String
+	}
+
+	span.SetStatus(codes.Ok, "Message retrieved successfully")
+	return result, nil
+}
+
+// Delete a message from PostgreSQL by ID
+func deleteMessageByID(ctx context.Context, id string) error {
+	ctx, span := tracer.Start(ctx, "pg.delete_message_by_id")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("message.id", id))
+	fmt.Printf("TraceID=%s Deleting message with ID: %s\n", getTraceID(ctx), id)
+
+	query := "DELETE FROM messages WHERE id = $1"
+	result, err := postgresDB.ExecContext(ctx, query, id)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to delete message")
+		return fmt.Errorf("failed to delete message: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		span.RecordError(err)
+		fmt.Printf("Warning: couldn't get rows affected: %v\n", err)
+	} else if rowsAffected == 0 {
+		span.SetStatus(codes.Error, "Message not found")
+		return fmt.Errorf("message with ID %s not found", id)
+	}
+
+	span.SetStatus(codes.Ok, "Message deleted successfully")
+	return nil
+}
+
+// Get trace context for a message
+func getTraceInfoByID(ctx context.Context, id string) (map[string]interface{}, error) {
+	ctx, span := tracer.Start(ctx, "pg.get_trace_info_by_id")
+	defer span.End()
+
+	span.SetAttributes(attribute.String("message.id", id))
+	fmt.Printf("TraceID=%s Getting trace info for message ID: %s\n", getTraceID(ctx), id)
+
+	query := `
+        SELECT trace_id, span_id, headers 
+        FROM messages 
+        WHERE id = $1
+    `
+
+	var traceID sql.NullString
+	var spanID sql.NullString
+	var headersJSON string
+
+	err := postgresDB.QueryRowContext(ctx, query, id).Scan(&traceID, &spanID, &headersJSON)
+	if err == sql.ErrNoRows {
+		span.SetStatus(codes.Error, "Message not found")
+		return nil, fmt.Errorf("message with ID %s not found", id)
+	}
+
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Database query error")
+		return nil, fmt.Errorf("database error: %w", err)
+	}
+
+	// Check if we have trace information
+	result := map[string]interface{}{
+		"id": id,
+	}
+
+	if traceID.Valid {
+		result["trace_id"] = traceID.String
+	}
+
+	if spanID.Valid {
+		result["span_id"] = spanID.String
+	}
+
+	// Parse headers JSON if present to check for trace context
+	var propagated bool
+	if headersJSON != "" && headersJSON != "{}" {
+		var headers map[string]string
+		if err := json.Unmarshal([]byte(headersJSON), &headers); err != nil {
+			span.RecordError(err)
+			fmt.Printf("Warning: failed to parse headers JSON: %v\n", err)
+		} else {
+			// Check for traceparent header
+			if _, ok := headers["traceparent"]; ok {
+				propagated = true
+			}
+		}
+	}
+
+	result["propagated"] = propagated
+
+	span.SetStatus(codes.Ok, "Trace info retrieved successfully")
+	return result, nil
+}
+
 // setupHealthEndpoints sets up a small HTTP server for health checks
 func setupHealthEndpoints() {
 	go func() {
+		// Add query endpoint to fetch messages from PostgreSQL
+		http.HandleFunc("/query", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling query request: %s %s\n", r.Method, r.URL.Path)
+
+			// Only allow GET requests
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				fmt.Fprintf(w, "Method not allowed")
+				return
+			}
+
+			// Get message ID from query parameter
+			messageID := r.URL.Query().Get("id")
+			if messageID == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Missing id parameter")
+				return
+			}
+
+			// Create a trace span for this operation
+			ctx, span := tracer.Start(r.Context(), "query-endpoint")
+			defer span.End()
+			span.SetAttributes(attribute.String("message.id", messageID))
+
+			// Query the message from PostgreSQL
+			message, err := queryMessageByID(ctx, messageID)
+			if err != nil {
+				status := http.StatusInternalServerError
+				if err.Error() == fmt.Sprintf("message with ID %s not found", messageID) {
+					status = http.StatusNotFound
+				}
+
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "Failed to query message")
+				w.WriteHeader(status)
+				fmt.Fprintf(w, "Error: %v", err)
+				return
+			}
+
+			// Return the message as JSON
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(message); err != nil {
+				span.RecordError(err)
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			span.SetStatus(codes.Ok, "Message retrieved successfully")
+			fmt.Printf("Successfully returned message with ID: %s\n", messageID)
+		})
+
+		// Add traces endpoint to verify trace context propagation
+		http.HandleFunc("/traces", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling traces request: %s %s\n", r.Method, r.URL.Path)
+
+			// Only allow GET requests
+			if r.Method != http.MethodGet {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				fmt.Fprintf(w, "Method not allowed")
+				return
+			}
+
+			// Get message ID from query parameter
+			messageID := r.URL.Query().Get("id")
+			if messageID == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Missing id parameter")
+				return
+			}
+
+			// Create a trace span for this operation
+			ctx, span := tracer.Start(r.Context(), "traces-endpoint")
+			defer span.End()
+			span.SetAttributes(attribute.String("message.id", messageID))
+
+			// Get trace info for the message
+			traceInfo, err := getTraceInfoByID(ctx, messageID)
+			if err != nil {
+				status := http.StatusInternalServerError
+				if err.Error() == fmt.Sprintf("message with ID %s not found", messageID) {
+					status = http.StatusNotFound
+				}
+
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "Failed to get trace info")
+				w.WriteHeader(status)
+				fmt.Fprintf(w, "Error: %v", err)
+				return
+			}
+
+			// Return the trace info as JSON
+			w.Header().Set("Content-Type", "application/json")
+			if err := json.NewEncoder(w).Encode(traceInfo); err != nil {
+				span.RecordError(err)
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			span.SetStatus(codes.Ok, "Trace info retrieved successfully")
+			fmt.Printf("Successfully returned trace info for message with ID: %s\n", messageID)
+		})
+
+		// Add cleanup endpoint to delete test messages
+		http.HandleFunc("/cleanup", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling cleanup request: %s %s\n", r.Method, r.URL.Path)
+
+			// Allow DELETE or POST methods
+			if r.Method != http.MethodDelete && r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				fmt.Fprintf(w, "Method not allowed")
+				return
+			}
+
+			// Get message ID from query parameter
+			messageID := r.URL.Query().Get("id")
+			if messageID == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				fmt.Fprintf(w, "Missing id parameter")
+				return
+			}
+
+			// Create a trace span for this operation
+			ctx, span := tracer.Start(r.Context(), "cleanup-endpoint")
+			defer span.End()
+			span.SetAttributes(attribute.String("message.id", messageID))
+
+			// Delete the message from PostgreSQL
+			err := deleteMessageByID(ctx, messageID)
+			if err != nil {
+				status := http.StatusInternalServerError
+				if err.Error() == fmt.Sprintf("message with ID %s not found", messageID) {
+					status = http.StatusNotFound
+				}
+
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "Failed to delete message")
+				w.WriteHeader(status)
+				fmt.Fprintf(w, "Error: %v", err)
+				return
+			}
+
+			// Also clean up from Redis if possible
+			redisKey := "msg:" + messageID
+			redisErr := redisClient.Del(ctx, redisKey).Err()
+			if redisErr != nil {
+				fmt.Printf("Warning: Failed to clean up Redis key %s: %v\n", redisKey, redisErr)
+			}
+
+			// Return success response
+			w.Header().Set("Content-Type", "application/json")
+			response := map[string]interface{}{
+				"status":  "success",
+				"message": "Message deleted successfully",
+				"id":      messageID,
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				span.RecordError(err)
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			span.SetStatus(codes.Ok, "Message deleted successfully")
+			fmt.Printf("Successfully deleted message with ID: %s\n", messageID)
+		})
+
+		// Add reset-test-state endpoint for test setup/teardown
+		http.HandleFunc("/reset-test-state", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling test state reset: %s %s\n", r.Method, r.URL.Path)
+
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				fmt.Fprintf(w, "Method not allowed")
+				return
+			}
+
+			// Only allow this endpoint in dev/test environments
+			env := os.Getenv("ENV")
+			if env != "dev" && env != "stg" && env != "test" {
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprintf(w, "This endpoint is only available in dev/test environments")
+				return
+			}
+
+			ctx := r.Context()
+
+			// Delete test messages from PostgreSQL
+			query := `
+				DELETE FROM messages 
+				WHERE id LIKE '%test%' OR id LIKE '%cypress%'
+			`
+
+			result, err := postgresDB.ExecContext(ctx, query)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				fmt.Fprintf(w, "Failed to delete test messages: %v", err)
+				return
+			}
+
+			rowsAffected, err := result.RowsAffected()
+			if err != nil {
+				fmt.Printf("Warning: couldn't get rows affected: %v\n", err)
+				rowsAffected = -1
+			}
+
+			// Clean up Redis keys related to test messages
+			var redisKeysDeleted int64 = 0
+			testKeys, err := redisClient.Keys(ctx, "msg:*test*").Result()
+			if err == nil && len(testKeys) > 0 {
+				redisKeysDeleted, _ = redisClient.Del(ctx, testKeys...).Result()
+			}
+
+			// Return success response
+			w.Header().Set("Content-Type", "application/json")
+			response := map[string]interface{}{
+				"status":             "success",
+				"message":            "Test state reset successful",
+				"deleted_rows":       rowsAffected,
+				"deleted_redis_keys": redisKeysDeleted,
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			fmt.Printf("Test state reset: deleted %d database rows and %d Redis keys\n",
+				rowsAffected, redisKeysDeleted)
+		})
 		// Create a simple HTTP server for health checks
 		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Handling health check: %s %s\n", r.Method, r.URL.Path)
