@@ -22,7 +22,7 @@ Cypress.Commands.add('verifyMemorizerProcessed', (messageId, timeout = 5000) => 
     const checkStatus = () => {
         return cy.request({
             method: 'GET',
-            url: `${Cypress.env('MEMORIZER_URL')}/status?id=${messageId}`,
+            url: `${Cypress.env('ENQUEUER_URL')}/check-memorizer?id=${messageId}`,
             failOnStatusCode: false
         }).then(response => {
             if (response.status === 200 && response.body.processed) {
@@ -42,7 +42,6 @@ Cypress.Commands.add('verifyMemorizerProcessed', (messageId, timeout = 5000) => 
     return checkStatus();
 });
 
-// Command to verify a message was written to the database by writer
 Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 8000) => {
     // Use polling to check if the message has been written
     const checkInterval = 500; // ms
@@ -52,7 +51,7 @@ Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 8000) => {
     const checkDatabase = () => {
         return cy.request({
             method: 'GET',
-            url: `${Cypress.env('WRITER_URL')}/query?id=${messageId}`,
+            url: `${Cypress.env('ENQUEUER_URL')}/check-writer?id=${messageId}`,
             failOnStatusCode: false
         }).then(response => {
             if (response.status === 200 && response.body.id === messageId) {
@@ -71,6 +70,7 @@ Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 8000) => {
 
     return checkDatabase();
 });
+
 
 // Command to check service health
 Cypress.Commands.add('checkServiceHealth', (service) => {
@@ -99,7 +99,7 @@ Cypress.Commands.add('verifyTraceContext', (messageId, timeout = 10000) => {
     const checkTrace = () => {
         return cy.request({
             method: 'GET',
-            url: `${Cypress.env('WRITER_URL')}/traces?id=${messageId}`,
+            url: `${Cypress.env('ENQUEUER_URL')}/check-trace?id=${messageId}`,
             failOnStatusCode: false
         }).then(response => {
             if (response.status === 200 && response.body.trace_id) {
