@@ -559,7 +559,7 @@ func setupHealthEndpoints() {
 				return
 			}
 
-			cleanedCount := 0
+			var cleanedCount int64 = 0
 			if len(testKeys) > 0 {
 				// Delete all test keys
 				cleanedCount, err = redisClient.Del(ctx, testKeys...).Result()
