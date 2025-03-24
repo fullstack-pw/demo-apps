@@ -260,7 +260,7 @@ func handleCheckMemorizer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing message ID", http.StatusBadRequest)
 		return
 	}
-
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
 	// Use internal service discovery to check with memorizer
 	// This would involve a HTTP call to memorizer service within the cluster
 	resp, err := http.Get(fmt.Sprintf("http://memorizer.default.svc.cluster.local:8080/status?id=%s", messageId))
@@ -287,7 +287,7 @@ func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing message ID", http.StatusBadRequest)
 		return
 	}
-
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
 	// Use internal service discovery to check with writer
 	resp, err := http.Get(fmt.Sprintf("http://writer.default.svc.cluster.local:8080/query?id=%s", messageId))
 	if err != nil {
@@ -313,7 +313,7 @@ func handleCheckTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing message ID", http.StatusBadRequest)
 		return
 	}
-
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
 	// Use internal service discovery to check with writer
 	resp, err := http.Get(fmt.Sprintf("http://writer.default.svc.cluster.local:8080/traces?id=%s", messageId))
 	if err != nil {
