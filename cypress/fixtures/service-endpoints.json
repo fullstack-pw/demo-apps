@@ -1,0 +1,20 @@
+{
+    "enqueuer": {
+        "add": "/add",
+        "health": "/health",
+        "natscheck": "/natscheck"
+    },
+    "memorizer": {
+        "status": "/status",
+        "health": "/health",
+        "natscheck": "/natscheck",
+        "redischeck": "/redischeck"
+    },
+    "writer": {
+        "query": "/query",
+        "health": "/health",
+        "dbcheck": "/dbcheck",
+        "redischeck": "/redischeck",
+        "traces": "/traces"
+    }
+}

@@ -1,0 +1,22 @@
+{
+    "dev": {
+        "enqueuer": "https://dev.enqueuer.fullstack.pw",
+        "memorizer": "https://dev.memorizer.fullstack.pw",
+        "writer": "https://dev.writer.fullstack.pw"
+    },
+    "stg": {
+        "enqueuer": "https://stg.enqueuer.fullstack.pw",
+        "memorizer": "https://stg.memorizer.fullstack.pw",
+        "writer": "https://stg.writer.fullstack.pw"
+    },
+    "prod": {
+        "enqueuer": "https://enqueuer.fullstack.pw",
+        "memorizer": "https://memorizer.fullstack.pw",
+        "writer": "https://writer.fullstack.pw"
+    },
+    "local": {
+        "enqueuer": "http://localhost:8081",
+        "memorizer": "http://localhost:8082",
+        "writer": "http://localhost:8083"
+    }
+}

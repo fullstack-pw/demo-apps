@@ -1,0 +1,66 @@
+{
+    "standardMessages": [
+        {
+            "id": "test-message-1",
+            "content": "This is a standard test message"
+        },
+        {
+            "id": "test-message-2",
+            "content": "Another standard test message with different content"
+        },
+        {
+            "id": "test-message-3",
+            "content": "Message with special characters: !@#$%^&*()_+"
+        }
+    ],
+    "errorMessages": [
+        {
+            "id": "error-message-1",
+            "content": "This message should trigger an error",
+            "triggerError": true
+        },
+        {
+            "id": "error-message-2",
+            "content": "Message with invalid format",
+            "format": "invalid"
+        }
+    ],
+    "largeMessages": [
+        {
+            "id": "large-message-1",
+            "content": "This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. This is a large message with repeated content. "
+        }
+    ],
+    "messagesWithHeaders": [
+        {
+            "id": "header-message-1",
+            "content": "Message with custom headers",
+            "headers": {
+                "X-Custom-Header": "custom-value",
+                "X-Test-ID": "test-123"
+            }
+        }
+    ],
+    "batchMessages": [
+        {
+            "id": "batch-message-1",
+            "content": "First message in batch"
+        },
+        {
+            "id": "batch-message-2",
+            "content": "Second message in batch"
+        },
+        {
+            "id": "batch-message-3",
+            "content": "Third message in batch"
+        },
+        {
+            "id": "batch-message-4",
+            "content": "Fourth message in batch"
+        },
+        {
+            "id": "batch-message-5",
+            "content": "Fifth message in batch"
+        }
+    ]
+}

@@ -1,0 +1,11 @@
+{
+    "queues": [
+        "default",
+        "high-priority",
+        "low-priority",
+        "notifications",
+        "analytics",
+        "cypress-test",
+        "e2e-test"
+    ]
+}
