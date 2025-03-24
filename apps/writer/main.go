@@ -321,7 +321,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 // processRedisMessage processes a message from Redis with tracing
 func processRedisMessage(ctx context.Context, key string, value string) error {
 	// Create a span for processing the Redis message
-	var parentCtx context.Context = ctx
+	var parentCtx = ctx
 	var message RedisMessage
 
 	if err := json.Unmarshal([]byte(value), &message); err == nil && message.Headers != nil {
@@ -398,7 +398,12 @@ func subscribeToRedisChanges(ctx context.Context) {
 
 	// Set up a Redis subscription to keyspace notifications
 	pubsub := redisClient.PSubscribe(ctx, "__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg:*")
-	defer pubsub.Close()
+	defer func() {
+		err := pubsub.Close()
+		if err != nil {
+			fmt.Printf("Error closing pubsub: %v\n", err)
+		}
+	}()
 
 	// Enable keyspace notifications on the Redis server (only needs to be done once)
 	err := redisClient.ConfigSet(ctx, "notify-keyspace-events", "KA").Err()
@@ -618,7 +623,7 @@ func setupHealthEndpoints() {
 			_, err := redisClient.Ping(ctx).Result()
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, writeErr := w.Write([]byte(fmt.Sprintf("Redis connection error: %v", err)))
+				_, writeErr := fmt.Fprintf(w, "Redis connection error: %v", err)
 				if writeErr != nil {
 					fmt.Printf("Error writing Redis check response: %v\n", writeErr)
 				}
@@ -647,7 +652,7 @@ func setupHealthEndpoints() {
 			err := postgresDB.Ping()
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, writeErr := w.Write([]byte(fmt.Sprintf("PostgreSQL connection error: %v", err)))
+				_, writeErr := fmt.Fprintf(w, "PostgreSQL connection error: %v", err)
 				if writeErr != nil {
 					fmt.Printf("Error writing DB check response: %v\n", writeErr)
 				}
