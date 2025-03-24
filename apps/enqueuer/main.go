@@ -149,6 +149,17 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 	))
 	defer span.End()
 
+	// Ensure Headers map exists
+	if msg.Headers == nil {
+		msg.Headers = make(map[string]string)
+	}
+
+	// Inject current trace context into message headers
+	carrier := propagation.MapCarrier(msg.Headers)
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+	fmt.Printf("TraceID=%s Injected trace context into message headers\n", getTraceID(ctx))
+
 	// Convert message to JSON
 	data, err := json.Marshal(msg)
 	if err != nil {
