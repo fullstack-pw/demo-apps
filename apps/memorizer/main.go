@@ -422,9 +422,172 @@ func main() {
 	fmt.Println("Shutting down gracefully...")
 }
 
+// Add a helper function to check if a message exists in Redis
+func checkMessageStatus(ctx context.Context, messageID string) (bool, error) {
+	ctx, span := tracer.Start(ctx, "redis.check_message_status")
+	defer span.End()
+
+	// Try to find any key that might contain this message ID
+	// First check by exact ID match
+	val, err := redisClient.Get(ctx, messageID).Result()
+	if err == nil && val != "" {
+		span.SetStatus(codes.Ok, "Message found by direct ID")
+		return true, nil
+	}
+
+	// Then check if it's in any key with "msg:" prefix
+	val, err = redisClient.Get(ctx, "msg:"+messageID).Result()
+	if err == nil && val != "" {
+		span.SetStatus(codes.Ok, "Message found by msg:ID")
+		return true, nil
+	}
+
+	// Finally, scan all keys for partial match
+	pattern := fmt.Sprintf("*%s*", messageID)
+	iter := redisClient.Scan(ctx, 0, pattern, 10).Iterator()
+	for iter.Next(ctx) {
+		span.SetStatus(codes.Ok, "Message found by pattern scan")
+		return true, nil
+	}
+
+	if err := iter.Err(); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Error during Redis scan")
+		return false, err
+	}
+
+	// Message not found
+	return false, nil
+}
+
 // setupHealthEndpoints sets up a small HTTP server for health checks
 func setupHealthEndpoints() {
 	go func() {
+		// Add status endpoint to check if a message was processed
+		http.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling status check: %s %s\n", r.Method, r.URL.Path)
+
+			// Get message ID from query parameter
+			messageID := r.URL.Query().Get("id")
+			if messageID == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				response := map[string]interface{}{
+					"error":     "Missing id parameter",
+					"processed": false,
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					fmt.Printf("Error encoding response: %v\n", err)
+				}
+				return
+			}
+
+			// Create a trace span for this operation
+			ctx, span := tracer.Start(r.Context(), "status-check")
+			defer span.End()
+			span.SetAttributes(attribute.String("message.id", messageID))
+
+			// Check if the message exists in Redis
+			processed, err := checkMessageStatus(ctx, messageID)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "Failed to check message status")
+				w.WriteHeader(http.StatusInternalServerError)
+				response := map[string]interface{}{
+					"error":     "Failed to check message status",
+					"processed": false,
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					fmt.Printf("Error encoding response: %v\n", err)
+				}
+				return
+			}
+
+			// Return the message status
+			w.Header().Set("Content-Type", "application/json")
+			response := map[string]interface{}{
+				"processed": processed,
+				"id":        messageID,
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				span.RecordError(err)
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			fmt.Printf("Status check for message %s: processed=%v\n", messageID, processed)
+		})
+
+		// Add reset-test-state endpoint for test cleanup
+		http.HandleFunc("/reset-test-state", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Printf("Handling test state reset: %s %s\n", r.Method, r.URL.Path)
+
+			if r.Method != http.MethodPost {
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				response := map[string]string{
+					"error": "Method not allowed",
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					fmt.Printf("Error encoding response: %v\n", err)
+				}
+				return
+			}
+
+			// Only allow this endpoint in dev/test environments
+			env := os.Getenv("ENV")
+			if env != "dev" && env != "stg" && env != "test" {
+				w.WriteHeader(http.StatusForbidden)
+				response := map[string]string{
+					"error": "This endpoint is only available in dev/test environments",
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					fmt.Printf("Error encoding response: %v\n", err)
+				}
+				return
+			}
+
+			ctx := r.Context()
+
+			// Clean up test data - find and delete test message keys
+			testKeys, err := redisClient.Keys(ctx, "msg:*test*").Result()
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				response := map[string]string{
+					"error": fmt.Sprintf("Failed to find test keys: %v", err),
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					fmt.Printf("Error encoding response: %v\n", err)
+				}
+				return
+			}
+
+			cleanedCount := 0
+			if len(testKeys) > 0 {
+				// Delete all test keys
+				cleanedCount, err = redisClient.Del(ctx, testKeys...).Result()
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					response := map[string]string{
+						"error": fmt.Sprintf("Failed to delete test keys: %v", err),
+					}
+					if err := json.NewEncoder(w).Encode(response); err != nil {
+						fmt.Printf("Error encoding response: %v\n", err)
+					}
+					return
+				}
+			}
+
+			// Return success response
+			w.Header().Set("Content-Type", "application/json")
+			response := map[string]interface{}{
+				"status":       "success",
+				"message":      "Test state reset successful",
+				"cleaned_keys": cleanedCount,
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				fmt.Printf("Error encoding response: %v\n", err)
+			}
+
+			fmt.Printf("Test state reset: cleaned %d keys\n", cleanedCount)
+		})
 		// Create a simple HTTP server for health checks
 		http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			fmt.Printf("Handling health check: %s %s\n", r.Method, r.URL.Path)
