@@ -269,12 +269,20 @@ func handleCheckMemorizer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error contacting memorizer: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
 
 	// Forward the response from memorizer
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
 }
 
 // handleCheckWriter checks if a message was written by writer
@@ -295,12 +303,20 @@ func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error contacting writer: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
 
 	// Forward the response from writer
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
 }
 
 // handleCheckTrace checks trace propagation
@@ -321,12 +337,20 @@ func handleCheckTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error contacting writer for trace: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
 
 	// Forward the response
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
 }
 
 func main() {
