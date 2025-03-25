@@ -2,8 +2,14 @@ FROM golang:1.23.1
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first to leverage Docker cache
-COPY main.go go.mod go.sum ./
+# Copy shared module first
+COPY shared ./shared
+
+# Copy writer app files
+COPY writer/main.go writer/go.mod writer/go.sum ./writer/
+
+# Change to writer directory
+WORKDIR /app/writer
 
 # Download dependencies
 RUN go mod tidy
