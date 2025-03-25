@@ -2,9 +2,9 @@ FROM golang:1.23.1
 
 WORKDIR /app
 
-COPY apps/share/ ./
+COPY share/ ./
 
-COPY ./apps/enqueuer/main.go ./apps/enqueuer/go.mod ./apps/enqueuer/go.sum ./
+COPY enqueuer/main.go enqueuer/go.mod enqueuer/go.sum ./
 
 # Download dependencies
 RUN go mod tidy
