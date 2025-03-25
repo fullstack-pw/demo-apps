@@ -2,8 +2,14 @@ FROM golang:1.23.1
 
 WORKDIR /app
 
-# Copy go.mod and go.sum first to leverage Docker cache
-COPY main.go go.mod go.sum ./
+# Copy shared module first
+COPY shared ./shared
+
+# Copy memorizer app files
+COPY memorizer/main.go memorizer/go.mod memorizer/go.sum ./memorizer/
+
+# Change to memorizer directory
+WORKDIR /app/memorizer
 
 # Download dependencies
 RUN go mod tidy
