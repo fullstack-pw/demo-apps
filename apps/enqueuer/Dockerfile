@@ -4,7 +4,7 @@ WORKDIR /app
 
 COPY apps/share/ ./
 
-COPY apps/enqueuer/main.go apps/enqueuer/go.mod apps/enqueuer/go.sum ./
+COPY ./apps/enqueuer/main.go ./apps/enqueuer/go.mod ./apps/enqueuer/go.sum ./
 
 # Download dependencies
 RUN go mod tidy
