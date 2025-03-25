@@ -80,7 +80,7 @@ jobs:
     with:
       app-context: "./apps"
       app-name: "${{ matrix.app.app_name }}"
-      app-dockerfile: "${{ matrix.app.app_name }}/Dockerfile"
+      app-dockerfile: "./apps/${{ matrix.app.app_name }}/Dockerfile"
 
   dev-deploy:
     needs: [determine-app, docker-build-and-push]
