@@ -3,7 +3,7 @@ FROM golang:1.23.1
 WORKDIR /app
 
 # Copy go.mod and go.sum first to leverage Docker cache
-COPY main.go go.mod go.sum ./
+COPY enqueuer/main.go enqueuer/go.mod enqueuer/go.sum  shared ./
 
 # Download dependencies
 RUN go mod tidy

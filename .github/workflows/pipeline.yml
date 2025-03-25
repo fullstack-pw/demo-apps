@@ -78,8 +78,9 @@ jobs:
     name: Build and Push ${{ matrix.app.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
     with:
-      app-context: "./${{ matrix.app.app_path }}"
+      app-context: "./apps"
       app-name: "${{ matrix.app.app_name }}"
+      app-dockerfile: "${{ matrix.app.app_name }}/Dockerfile"
 
   dev-deploy:
     needs: [determine-app, docker-build-and-push]
