@@ -1,4 +1,4 @@
-module shared
+module github.com/fullstack-pw/shared
 
 go 1.23.1
 

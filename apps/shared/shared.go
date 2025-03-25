@@ -3,11 +3,11 @@ package shared
 
 import (
 	// Import subpackages for easy access
-	_ "shared/connections"
-	_ "shared/health"
-	_ "shared/logging"
-	_ "shared/server"
-	_ "shared/tracing"
+	_ "github.com/fullstack-pw/shared/connections"
+	_ "github.com/fullstack-pw/shared/health"
+	_ "github.com/fullstack-pw/shared/logging"
+	_ "github.com/fullstack-pw/shared/server"
+	_ "github.com/fullstack-pw/shared/tracing"
 )
 
 // Version is the current version of the shared library

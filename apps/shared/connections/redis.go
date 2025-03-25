@@ -6,7 +6,7 @@ import (
 	"os"
 	"time"
 
-	"shared/tracing"
+	"github.com/fullstack-pw/shared/tracing"
 
 	"github.com/go-redis/redis/v8"
 )

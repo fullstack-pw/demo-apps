@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"shared/tracing"
+	"github.com/fullstack-pw/shared/tracing"
 )
 
 // Checker is an interface for components that can be health-checked

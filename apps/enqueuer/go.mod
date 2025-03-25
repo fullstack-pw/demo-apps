@@ -1,4 +1,4 @@
-module enqueuer
+module github.com/fullstack-pw/enqueuer
 
 go 1.23.1
 
