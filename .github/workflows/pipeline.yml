@@ -41,7 +41,7 @@ jobs:
           APPS=()
 
           for FILE in $CHANGED_FILES; do
-            if [[ $FILE == apps/* ]]; then
+            if [[ $FILE == apps/* && $FILE != apps/shared/* ]]; then
               APP_PATH=$(echo $FILE | cut -d'/' -f1-2)
               APP_NAME=$(echo $FILE | cut -d'/' -f2)
               

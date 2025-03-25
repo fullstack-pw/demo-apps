@@ -1,4 +1,4 @@
-module fullstack.pw/shared
+module shared
 
 go 1.23.1
 

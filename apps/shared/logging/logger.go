@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"fullstack.pw/shared/tracing"
+	"shared/tracing"
 )
 
 // Level represents a logging level

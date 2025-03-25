@@ -6,7 +6,8 @@ import (
 	"os"
 	"time"
 
-	"fullstack.pw/shared/tracing"
+	"shared/tracing"
+
 	"github.com/nats-io/nats.go"
 )
 

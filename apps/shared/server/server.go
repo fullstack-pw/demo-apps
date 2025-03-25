@@ -9,8 +9,9 @@ import (
 	"syscall"
 	"time"
 
-	"fullstack.pw/shared/health"
-	"fullstack.pw/shared/logging"
+	"shared/health"
+	"shared/logging"
+
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 

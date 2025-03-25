@@ -7,7 +7,8 @@ import (
 	"os"
 	"time"
 
-	"fullstack.pw/shared/tracing"
+	"shared/tracing"
+
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
