@@ -99,7 +99,7 @@ func storeInRedis(ctx context.Context, id string, content string) error {
 // handleMessage processes a message from NATS with tracing
 func handleMessage(msg *nats.Msg) {
 	// Extract trace context from message if available
-	var parentCtx context.Context = context.Background()
+	parentCtx := context.Background()
 
 	// Try to unmarshal the message to extract headers
 	var message Message
