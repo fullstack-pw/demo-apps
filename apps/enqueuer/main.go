@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -148,7 +149,12 @@ func handleCheckMemorizer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error contacting memorizer: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			// Handle the error, for example:
+			log.Printf("Error closing response body: %v", err)
+		}
+	}()
 
 	// Forward the response from memorizer
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
@@ -177,7 +183,12 @@ func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Error contacting writer: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			// Handle the error, for example:
+			log.Printf("Error closing response body: %v", err)
+		}
+	}()
 
 	// Forward the response from writer
 	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
@@ -204,7 +215,12 @@ func main() {
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize tracer", "error", err)
 	}
-	defer tracing.ShutdownTracer(ctx, tp)
+	defer func() {
+		if err := tracing.ShutdownTracer(ctx, tp); err != nil {
+			// Handle the error, for example:
+			log.Printf("Error shutting down tracer: %v", err)
+		}
+	}()
 
 	// Initialize NATS connection
 	natsConn = connections.NewNATSConnection()
