@@ -247,12 +247,18 @@ func main() {
 
 		if !natsConn.IsConnected() {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			w.Write([]byte("NATS connection lost"))
+			_, err := w.Write([]byte("NATS connection lost"))
+			if err != nil {
+				logger.Error(ctx, "Error writing response", "error", err)
+			}
 			return
 		}
 
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("NATS connection OK"))
+		_, err := w.Write([]byte("NATS connection OK"))
+		if err != nil {
+			logger.Error(ctx, "Error writing response", "error", err)
+		}
 	})
 	// Register health checks
 	srv.RegisterHealthChecks(
