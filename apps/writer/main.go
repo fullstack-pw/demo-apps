@@ -193,7 +193,11 @@ func subscribeToRedisChanges(ctx context.Context) {
 	// Subscribe to keyspace notifications
 	patterns := []string{"__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg:*"}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
-	defer pubsub.Close()
+	defer func() {
+		if err := pubsub.Close(); err != nil {
+			logger.Error(ctx, "Error closing Redis pubsub", "error", err)
+		}
+	}()
 
 	logger.Info(ctx, "Listening for Redis keyspace notifications")
 
@@ -466,21 +470,33 @@ func main() {
 	if err != nil {
 		logger.Fatal(ctx, "Failed to initialize tracer", "error", err)
 	}
-	defer tracing.ShutdownTracer(ctx, tp)
+	defer func() {
+		if err := tracing.ShutdownTracer(ctx, tp); err != nil {
+			logger.Error(ctx, "Error shutting down tracer", "error", err)
+		}
+	}()
 
 	// Initialize Redis connection
 	redisConn = connections.NewRedisConnection(connections.DefaultRedisConfig())
 	if err := redisConn.Connect(ctx); err != nil {
 		logger.Fatal(ctx, "Failed to connect to Redis", "error", err)
 	}
-	defer redisConn.Close()
+	defer func() {
+		if err := redisConn.Close(); err != nil {
+			logger.Error(ctx, "Error closing Redis connection", "error", err)
+		}
+	}()
 
 	// Initialize PostgreSQL connection
 	postgresConn = connections.NewPostgresConnection(connections.DefaultPostgresConfig())
 	if err := postgresConn.Connect(ctx); err != nil {
 		logger.Fatal(ctx, "Failed to connect to PostgreSQL", "error", err)
 	}
-	defer postgresConn.Close()
+	defer func() {
+		if err := postgresConn.Close(); err != nil {
+			logger.Error(ctx, "Error closing PostgreSQL connection", "error", err)
+		}
+	}()
 
 	// Initialize database schema
 	if err := initializeDatabase(ctx); err != nil {
