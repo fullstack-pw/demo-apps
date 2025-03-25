@@ -241,7 +241,19 @@ func main() {
 	srv.HandleFunc("/add", handleAdd)
 	srv.HandleFunc("/check-memorizer", handleCheckMemorizer)
 	srv.HandleFunc("/check-writer", handleCheckWriter)
+	srv.HandleFunc("/natscheck", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		logger.Debug(ctx, "Handling NATS check", "method", r.Method, "path", r.URL.Path)
 
+		if !natsConn.IsConnected() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("NATS connection lost"))
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("NATS connection OK"))
+	})
 	// Register health checks
 	srv.RegisterHealthChecks(
 		[]health.Checker{natsConn}, // Liveness checks
