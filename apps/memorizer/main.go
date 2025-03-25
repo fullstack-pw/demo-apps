@@ -481,7 +481,7 @@ func setupHealthEndpoints() {
 			_, err := redisClient.Ping(ctx).Result()
 			if err != nil {
 				w.WriteHeader(http.StatusServiceUnavailable)
-				_, writeErr := w.Write([]byte(fmt.Sprintf("Redis connection error: %v", err)))
+				_, writeErr := fmt.Fprintf(w, "Redis connection error: %v", err)
 				if writeErr != nil {
 					fmt.Printf("Error writing Redis check response: %v\n", writeErr)
 				}

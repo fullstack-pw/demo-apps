@@ -250,6 +250,109 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	fmt.Printf("TraceID=%s Request handled successfully\n", getTraceID(ctx))
 }
 
+// handleCheckMemorizer checks if a message was processed by memorizer
+func handleCheckMemorizer(w http.ResponseWriter, r *http.Request) {
+	ctx, span := tracer.Start(r.Context(), "handle-check-memorizer")
+	defer span.End()
+
+	messageId := r.URL.Query().Get("id")
+	if messageId == "" {
+		http.Error(w, "Missing message ID", http.StatusBadRequest)
+		return
+	}
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
+	// Use internal service discovery to check with memorizer
+	// This would involve a HTTP call to memorizer service within the cluster
+	resp, err := http.Get(fmt.Sprintf("http://memorizer.default.svc.cluster.local:8080/status?id=%s", messageId))
+	if err != nil {
+		span.RecordError(err)
+		http.Error(w, fmt.Sprintf("Error contacting memorizer: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
+
+	// Forward the response from memorizer
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
+}
+
+// handleCheckWriter checks if a message was written by writer
+func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
+	ctx, span := tracer.Start(r.Context(), "handle-check-writer")
+	defer span.End()
+
+	messageId := r.URL.Query().Get("id")
+	if messageId == "" {
+		http.Error(w, "Missing message ID", http.StatusBadRequest)
+		return
+	}
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
+	// Use internal service discovery to check with writer
+	resp, err := http.Get(fmt.Sprintf("http://writer.default.svc.cluster.local:8080/query?id=%s", messageId))
+	if err != nil {
+		span.RecordError(err)
+		http.Error(w, fmt.Sprintf("Error contacting writer: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
+
+	// Forward the response from writer
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
+}
+
+// handleCheckTrace checks trace propagation
+func handleCheckTrace(w http.ResponseWriter, r *http.Request) {
+	ctx, span := tracer.Start(r.Context(), "handle-check-trace")
+	defer span.End()
+
+	messageId := r.URL.Query().Get("id")
+	if messageId == "" {
+		http.Error(w, "Missing message ID", http.StatusBadRequest)
+		return
+	}
+	fmt.Printf("TraceID=%s Handling request: %s %s\n", getTraceID(ctx), r.Method, r.URL.Path)
+	// Use internal service discovery to check with writer
+	resp, err := http.Get(fmt.Sprintf("http://writer.default.svc.cluster.local:8080/traces?id=%s", messageId))
+	if err != nil {
+		span.RecordError(err)
+		http.Error(w, fmt.Sprintf("Error contacting writer for trace: %v", err), http.StatusInternalServerError)
+		return
+	}
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			fmt.Printf("Error closing response body: %v\n", err)
+		}
+	}()
+
+	// Forward the response
+	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.WriteHeader(resp.StatusCode)
+	_, err = io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error copying response: %v\n", err)
+	}
+}
+
 func main() {
 	fmt.Println("Starting enqueuer application...")
 
@@ -313,6 +416,10 @@ func main() {
 
 	// Register routes
 	http.Handle("/add", addHandler)
+	// Add to the HTTP server registration section in main.go
+	http.Handle("/check-memorizer", otelhttp.NewHandler(http.HandlerFunc(handleCheckMemorizer), "check-memorizer-handler"))
+	http.Handle("/check-writer", otelhttp.NewHandler(http.HandlerFunc(handleCheckWriter), "check-writer-handler"))
+	http.Handle("/check-trace", otelhttp.NewHandler(http.HandlerFunc(handleCheckTrace), "check-trace-handler"))
 	fmt.Println("Registered /add endpoint")
 
 	// Add a health check endpoint
