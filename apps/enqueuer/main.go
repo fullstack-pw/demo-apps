@@ -62,6 +62,14 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 
 	logger.Debug(ctx, "Injected trace context into message headers")
 
+	if url, ok := msg.Headers["image_url"]; ok {
+		logger.Info(ctx, "Publishing message with image URL",
+			"queue", queueName,
+			"message_id", msg.ID,
+			"image_url", url)
+		span.SetAttributes(attribute.String("message.image_url", url))
+	}
+
 	// Convert message to JSON
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -126,6 +134,14 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if msg.ID == "" {
+		// Generate ID if not provided
+		msg.ID = fmt.Sprintf("msg-%d", time.Now().UnixNano())
+		logger.Debug(ctx, "Generated message ID", "id", msg.ID)
+	}
+
+	// Add more detailed logging for the image URL
+	logger.Debug(ctx, "Adding image URL to message", "id", msg.ID, "image_url", imageURL)
 	// Add the image URL to the message
 	if msg.Headers == nil {
 		msg.Headers = make(map[string]string)
