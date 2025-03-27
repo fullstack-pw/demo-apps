@@ -37,8 +37,8 @@ var (
 	tracer    = tracing.GetTracer("memorizer")
 )
 
-// storeInRedis stores a message in Redis with tracing
-func storeInRedis(ctx context.Context, id string, content string) error {
+// Update the function signature to include headers
+func storeInRedis(ctx context.Context, id string, content string, headers map[string]string) error {
 	// Create a child span for the Redis operation
 	ctx, span := tracer.Start(ctx, "redis.store", trace.WithAttributes(
 		attribute.String("db.system", "redis"),
@@ -67,6 +67,18 @@ func storeInRedis(ctx context.Context, id string, content string) error {
 		ID:      id,
 		Content: content,
 		Headers: make(map[string]string),
+	}
+
+	// Copy original headers if provided
+	if headers != nil {
+		for k, v := range headers {
+			redisMsg.Headers[k] = v
+			// Log if we find an image URL
+			if k == "image_url" {
+				logger.Info(ctx, "Found image URL in headers", "id", id, "image_url", v)
+				span.SetAttributes(attribute.String("message.image_url", v))
+			}
+		}
 	}
 
 	// Inject current trace context into Redis message headers
@@ -154,7 +166,7 @@ func handleMessage(msg *nats.Msg) {
 	}
 
 	// Store message in Redis
-	if err := storeInRedis(ctx, message.ID, message.Content); err != nil {
+	if err := storeInRedis(ctx, message.ID, message.Content, message.Headers); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to store message")
 		logger.Error(ctx, "Error storing message", "error", err, "id", message.ID)

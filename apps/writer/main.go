@@ -123,7 +123,7 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 	// Create a span for processing the Redis message
 	var parentCtx = ctx
 	var message RedisMessage
-
+	logger.Info(ctx, "Starting to process Redis message", "key", key)
 	if err := json.Unmarshal([]byte(value), &message); err == nil && message.Headers != nil {
 		// Extract trace context from headers if present
 		parentCtx = tracing.ExtractTraceContext(context.Background(), message.Headers)
