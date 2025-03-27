@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -315,6 +317,55 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Info(ctx, "Status check completed", "id", id, "exists", exists > 0)
+}
+
+// executeScript executes a Python script with the given arguments and returns the output
+func executeScript(ctx context.Context, scriptPath string, args ...string) (string, error) {
+	ctx, span := tracer.Start(ctx, "script.execute", trace.WithAttributes(
+		attribute.String("script.path", scriptPath),
+		attribute.StringSlice("script.args", args),
+	))
+	defer span.End()
+
+	logger.Info(ctx, "Executing script", "path", scriptPath, "args", args)
+
+	// Prepare the command
+	cmd := exec.CommandContext(ctx, "python3", append([]string{scriptPath}, args...)...)
+
+	// Create buffers for stdout and stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Run the command
+	err := cmd.Run()
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Script execution failed")
+		logger.Error(ctx, "Script execution failed",
+			"error", err,
+			"stderr", stderr.String(),
+			"path", scriptPath,
+			"args", args,
+		)
+		return "", fmt.Errorf("script execution failed: %w\nstderr: %s", err, stderr.String())
+	}
+
+	output := stdout.String()
+	logger.Info(ctx, "Script executed successfully",
+		"path", scriptPath,
+		"output_length", len(output),
+	)
+
+	// Log a preview of the output if it's not too large
+	if len(output) > 0 && len(output) <= 500 {
+		logger.Debug(ctx, "Script output", "output", output)
+	} else if len(output) > 500 {
+		logger.Debug(ctx, "Script output preview", "output", output[:500]+"...")
+	}
+
+	span.SetStatus(codes.Ok, "Script executed successfully")
+	return output, nil
 }
 
 func main() {
