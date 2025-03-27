@@ -37,8 +37,8 @@ var (
 	tracer    = tracing.GetTracer("memorizer")
 )
 
-// storeInRedis stores a message in Redis with tracing
-func storeInRedis(ctx context.Context, id string, content string) error {
+// Update the function signature to include headers
+func storeInRedis(ctx context.Context, id string, content string, headers map[string]string) error {
 	// Create a child span for the Redis operation
 	ctx, span := tracer.Start(ctx, "redis.store", trace.WithAttributes(
 		attribute.String("db.system", "redis"),
@@ -69,9 +69,27 @@ func storeInRedis(ctx context.Context, id string, content string) error {
 		Headers: make(map[string]string),
 	}
 
+	// Copy original headers if provided
+	if headers != nil {
+		for k, v := range headers {
+			redisMsg.Headers[k] = v
+			// Log if we find an image URL
+			if k == "image_url" {
+				logger.Info(ctx, "Found image URL in headers", "id", id, "image_url", v)
+				span.SetAttributes(attribute.String("message.image_url", v))
+			}
+		}
+	}
+
 	// Inject current trace context into Redis message headers
 	tracing.InjectTraceContext(ctx, redisMsg.Headers)
-
+	if url, ok := redisMsg.Headers["image_url"]; ok {
+		logger.Info(ctx, "Storing message with image URL in Redis",
+			"id", id,
+			"key", key,
+			"image_url", url)
+		span.SetAttributes(attribute.String("message.image_url", url))
+	}
 	// Convert to JSON for storage
 	msgJSON, err := json.Marshal(redisMsg)
 	if err != nil {
@@ -116,7 +134,15 @@ func handleMessage(msg *nats.Msg) {
 	defer span.End()
 
 	logger.Debug(ctx, "Received message", "data", string(msg.Data), "subject", msg.Subject)
-
+	if message.Headers != nil {
+		if imageURL, ok := message.Headers["image_url"]; ok {
+			logger.Info(ctx, "Received message with image URL",
+				"id", message.ID,
+				"image_url", imageURL,
+				"subject", msg.Subject)
+			span.SetAttributes(attribute.String("message.image_url", imageURL))
+		}
+	}
 	// Set attributes for the message
 	span.SetAttributes(
 		attribute.String("message.subject", msg.Subject),
@@ -140,7 +166,7 @@ func handleMessage(msg *nats.Msg) {
 	}
 
 	// Store message in Redis
-	if err := storeInRedis(ctx, message.ID, message.Content); err != nil {
+	if err := storeInRedis(ctx, message.ID, message.Content, message.Headers); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to store message")
 		logger.Error(ctx, "Error storing message", "error", err, "id", message.ID)
