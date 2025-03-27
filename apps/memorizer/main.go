@@ -239,55 +239,54 @@ func handleMessage(msg *nats.Msg) {
 			logger.Info(ctx, "Image downloaded successfully", "id", message.ID, "path", imagePath)
 			// Store the image path in the message headers for later steps
 			message.Headers["image_path"] = imagePath
-		}
-	}
+			// Convert image to ASCII art if we have a script path
+			if asciiConverterPath != "" && message.Headers["image_path"] != "" {
+				logger.Info(ctx, "Converting image to ASCII art", "id", message.ID, "image_path", message.Headers["image_path"])
 
-	// Convert image to ASCII art if we have a script path
-	if asciiConverterPath != "" && message.Headers["image_path"] != "" {
-		logger.Info(ctx, "Converting image to ASCII art", "id", message.ID, "image_path", message.Headers["image_path"])
+				// Execute the ASCII converter script
+				asciiArt, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--columns", "80")
+				if err != nil {
+					logger.Error(ctx, "Failed to convert image to ASCII art",
+						"error", err,
+						"id", message.ID,
+						"image_path", message.Headers["image_path"])
+					// Continue processing even if conversion fails
+				} else {
+					// Store the ASCII art in Redis
+					asciiKey := message.ID + ":ascii"
+					logger.Info(ctx, "Storing ASCII art in Redis",
+						"id", message.ID,
+						"key", asciiKey,
+						"ascii_length", len(asciiArt))
 
-		// Execute the ASCII converter script
-		asciiArt, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--columns", "80")
-		if err != nil {
-			logger.Error(ctx, "Failed to convert image to ASCII art",
-				"error", err,
-				"id", message.ID,
-				"image_path", message.Headers["image_path"])
-			// Continue processing even if conversion fails
-		} else {
-			// Store the ASCII art in Redis
-			asciiKey := message.ID + ":ascii"
-			logger.Info(ctx, "Storing ASCII art in Redis",
-				"id", message.ID,
-				"key", asciiKey,
-				"ascii_length", len(asciiArt))
+					// Log the ASCII art (this will show up in the logs)
+					logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
 
-			// Log the ASCII art (this will show up in the logs)
-			logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
+					// Store in Redis
+					err = redisConn.SetWithTracing(ctx, asciiKey, asciiArt, 24*time.Hour)
+					if err != nil {
+						logger.Error(ctx, "Failed to store ASCII art in Redis",
+							"error", err,
+							"id", message.ID,
+							"key", asciiKey)
+					} else {
+						logger.Info(ctx, "ASCII art stored successfully",
+							"id", message.ID,
+							"key", asciiKey)
 
-			// Store in Redis
-			err = redisConn.SetWithTracing(ctx, asciiKey, asciiArt, 24*time.Hour)
-			if err != nil {
-				logger.Error(ctx, "Failed to store ASCII art in Redis",
-					"error", err,
-					"id", message.ID,
-					"key", asciiKey)
-			} else {
-				logger.Info(ctx, "ASCII art stored successfully",
-					"id", message.ID,
-					"key", asciiKey)
+						// Add ASCII key to message headers so we know it's available
+						message.Headers["ascii_key"] = asciiKey
+					}
+				}
 
-				// Add ASCII key to message headers so we know it's available
-				message.Headers["ascii_key"] = asciiKey
+				// Clean up the temporary image file
+				err = os.Remove(message.Headers["image_path"])
+				if err != nil {
+					logger.Warn(ctx, "Failed to remove temporary image file",
+						"error", err,
+						"path", message.Headers["image_path"])
+				}
 			}
-		}
-
-		// Clean up the temporary image file
-		err = os.Remove(message.Headers["image_path"])
-		if err != nil {
-			logger.Warn(ctx, "Failed to remove temporary image file",
-				"error", err,
-				"path", message.Headers["image_path"])
 		}
 	}
 
