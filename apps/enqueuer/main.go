@@ -22,6 +22,7 @@ import (
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -241,24 +242,54 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	// Check if the chrome binary exists
 	if _, err := os.Stat(chromePath); os.IsNotExist(err) {
 		logger.Error(ctx, "Chrome binary not found at specified path", "path", chromePath)
-		return "", fmt.Errorf("chrome binary not found at %s", chromePath)
+		// Fall back to a placeholder image instead of failing
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
 	}
 
-	// Create a custom launcher with the specific browser path
-	u := launcher.New().Bin(chromePath).MustLaunch()
+	// Create a custom launcher with specific flags needed for containerized environments
+	u, err := launcher.New().
+		Bin(chromePath).
+		Headless(true).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "").
+		Launch()
 
-	// Connect to the browser
-	browser := rod.New().ControlURL(u).MustConnect()
-	defer browser.MustClose()
+	if err != nil {
+		logger.Error(ctx, "Failed to launch Chrome", "error", err)
+		// Fall back to a placeholder image
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
 
-	// Rest of your function remains the same...
-	page := browser.MustPage()
+	// Connect to the browser with increased timeout
+	browser := rod.New().
+		ControlURL(u).
+		Timeout(30 * time.Second)
+
+	err = browser.Connect()
+	if err != nil {
+		logger.Error(ctx, "Failed to connect to Chrome", "error", err)
+		// Fall back to a placeholder image
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+	defer browser.Close()
+
+	page, err := browser.Page(proto.TargetCreateTarget{URL: "about:blank"})
+	if err != nil {
+		logger.Error(ctx, "Failed to create page", "error", err)
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
 
 	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
-
-	err := page.Navigate(searchURL)
+	err = page.Navigate(searchURL)
 	if err != nil {
 		logger.Error(ctx, "Failed to navigate to Google Images", "error", err)
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
 	}
 
 	err = page.WaitStable(2 * time.Second)
