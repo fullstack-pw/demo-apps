@@ -12,7 +12,6 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -396,7 +395,7 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 				fmt.Println("############################################################")
 				fmt.Println("STARTING ITERATION ON PAGE ELEMENTS AFTER CLICKING IMAGE")
 				fmt.Println("############################################################")
-				elementos, err := page.Elements("*")
+				elementos, err := page.Elements("img[src^='https']")
 				for dbgindice, elemento := range elementos {
 					dbgsrc, _ := elemento.Attribute("src")
 					dbgalt, _ := elemento.Attribute("alt")
@@ -433,16 +432,16 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 						dbgidValue = *id
 					}
 					dbghtml, _ := el.HTML()
-					dbgintheight, err := strconv.Atoi(dbgheightValue)
+					// dbgintheight, err := strconv.Atoi(dbgheightValue)
 					if err != nil {
 					}
-					dbgintwidth, err := strconv.Atoi(dbgwidthValue)
+					// dbgintwidth, err := strconv.Atoi(dbgwidthValue)
 					if err != nil {
 					}
-					if dbgintheight < 200 || dbgintwidth < 200 {
-						//logger.Debug(ctx, "Small element, skipping and selecting next one...")
-						continue
-					}
+					// if dbgintheight < 200 || dbgintwidth < 200 {
+					// 	logger.Debug(ctx, "Small element, skipping and selecting next one...")
+					// 	continue
+					// } else {
 					logger.Debug(ctx, "Image element details",
 						"index", dbgindice,
 						"src", dbgsrcValue,
@@ -452,6 +451,23 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 						"class", dbgclassValue,
 						"id", dbgidValue,
 						"html", dbghtml)
+					// }
+					html, err := page.HTML()
+					if err == nil {
+						// Look for imgurl parameter in the HTML
+						imgURLPattern := `imgurl=(http[^&"]+)`
+						re := regexp.MustCompile(imgURLPattern)
+						matches := re.FindStringSubmatch(html)
+						if len(matches) > 1 {
+							encodedURL := matches[1]
+							decodedURL, err := url.QueryUnescape(encodedURL)
+							if err == nil {
+								imgURL = decodedURL
+								logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
+								break
+							}
+						}
+					}
 				}
 				if err != nil {
 					logger.Error(ctx, "Error on debug session: ", err)
@@ -473,111 +489,21 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 
 					if err != nil {
 						logger.Error(ctx, fmt.Sprintf("Error taking screenshot after clicking image (attempt %d/%d): ", attempt, maxAttempts), "error", err)
-
-						// If this was the last attempt, handle the final failure
 						if attempt == maxAttempts {
 							logger.Error(ctx, "Failed to take screenshot after 10 attempts")
-							// Handle final failure case here
 							break
 						}
-
-						// Optional: add a small delay between attempts
 						time.Sleep(1000 * time.Millisecond)
 					}
 				}
-
-				// Now try to find the full-size image URL from the modal
-				// There are several possible selectors for the full-size image
-				fullSizeSelectors := []struct {
-					selector string
-					attr     string
-				}{
-					{".n3VNCb", "src"},               // Common selector for full-size image
-					{".KAlRDb", "src"},               // Alternative selector
-					{"img.iPVvYb", "src"},            // Another common class
-					{"img.r48jcc", "src"},            // Another image class
-					{"img.tXlD8e", "src"},            // Yet another image class
-					{"img.pxhXjf", "src"},            // One more image class
-					{".tvh9oe", "src"},               // Container with image
-					{".eJH8qd img", "src"},           // Parent container with image
-					{"a[href^='http'] img", "src"},   // Image inside a link
-					{".islrc.isv-r img", "data-src"}, // Data-src attribute
-				}
-
-				for _, sel := range fullSizeSelectors {
-					err := rod.Try(func() {
-						el := page.MustElement(sel.selector)
-						attr, err := el.Attribute(sel.attr)
-						if err == nil && attr != nil && *attr != "" {
-							value := *attr
-							// Skip base64 images and Google logos
-							if !strings.HasPrefix(value, "data:") &&
-								!strings.Contains(value, "googlelogo") &&
-								!strings.Contains(value, "gstatic.com") {
-								imgURL = value
-								logger.Debug(ctx, "Found full-size image URL",
-									"selector", sel.selector,
-									"attribute", sel.attr,
-									"url", imgURL)
-							}
-						}
-					})
-
-					if err == nil && imgURL != "" {
-						break
-					}
-				}
-
-				if imgURL == "" {
-					selector := fmt.Sprintf("img[src^='http'][alt='%s']", altValue)
-					fmt.Println(selector)
-					fmt.Printf("\nTrying to find any image with a valid src in the modal with this selector: %s\n\n", selector)
-					elements, err = page.Elements(selector)
-					fmt.Println(len(elements))
-					if err == nil && len(elements) > 0 {
-						logger.Debug(ctx, "Iterating elements trying to find the image URL")
-						for _, el := range elements {
-							src, err := el.Attribute("src")
-							if err == nil && src != nil && *src != "" {
-								// Skip Google UI elements
-								if !strings.Contains(*src, "googlelogo") &&
-									!strings.Contains(*src, "gstatic.com") &&
-									!strings.Contains(*src, "ui/") {
-									imgURL = *src
-									logger.Debug(ctx, "Found image from generic search", "url", imgURL)
-									break
-								}
-							}
-						}
-					} else {
-						logger.Error(ctx, "Error trying to find any image with a valid src in the modal: ", "error", err)
-						break
-					}
-
+				if imgURL != "" {
+					break
 				}
 			}
 		}
 	})
 	if err != nil {
 		logger.Error(ctx, "Failed to select base64 image element", "error", err)
-	}
-
-	if imgURL == "" {
-		html, err := page.HTML()
-		if err == nil {
-			// Look for imgurl parameter in the HTML
-			imgURLPattern := `imgurl=(http[^&"]+)`
-			re := regexp.MustCompile(imgURLPattern)
-			matches := re.FindStringSubmatch(html)
-			if len(matches) > 1 {
-				encodedURL := matches[1]
-				decodedURL, err := url.QueryUnescape(encodedURL)
-				if err == nil {
-					imgURL = decodedURL
-					logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
-				}
-			}
-		}
 	}
 
 	logger.Info(ctx, "Returning image URL", "url", imgURL)
