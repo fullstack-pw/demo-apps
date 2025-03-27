@@ -222,6 +222,21 @@ func handleMessage(msg *nats.Msg) {
 			span.SetAttributes(attribute.String("message.image_url", imageURL))
 		}
 	}
+	if url, ok := message.Headers["image_url"]; ok {
+		logger.Info(ctx, "Found image URL in message", "id", message.ID, "image_url", url)
+		span.SetAttributes(attribute.String("message.image_url", url))
+
+		// Download the image
+		imagePath, err := downloadImage(ctx, url)
+		if err != nil {
+			logger.Error(ctx, "Failed to download image", "error", err, "image_url", url)
+			// Continue processing even if image download fails
+		} else {
+			logger.Info(ctx, "Image downloaded successfully", "id", message.ID, "path", imagePath)
+			// Store the image path in the message headers for later steps
+			message.Headers["image_path"] = imagePath
+		}
+	}
 	// Set attributes for the message
 	span.SetAttributes(
 		attribute.String("message.subject", msg.Subject),
