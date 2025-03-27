@@ -206,7 +206,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 	}
 
 	// Subscribe to keyspace notifications
-	patterns := []string{"__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg:*"}
+	patterns := []string{"__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg-*"}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
 	defer func() {
 		if err := pubsub.Close(); err != nil {
