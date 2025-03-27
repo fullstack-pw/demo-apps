@@ -7,8 +7,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,9 +20,11 @@ import (
 	"github.com/fullstack-pw/shared/logging"
 	"github.com/fullstack-pw/shared/server"
 	"github.com/fullstack-pw/shared/tracing"
+	"github.com/go-rod/rod"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // Message represents the data structure we'll enqueue
@@ -78,6 +83,7 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 }
 
 // handleAdd handles the /add endpoint
+// Modified handleAdd function
 func handleAdd(w http.ResponseWriter, r *http.Request) {
 	// Create a context for this request
 	ctx := r.Context()
@@ -111,6 +117,20 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		queueName = "default"
 	}
 
+	// Search Google Images for the content
+	imageURL, err := searchGoogleImages(ctx, msg.Content)
+	if err != nil {
+		logger.Error(ctx, "Failed to search Google Images", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to search Google Images: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Add the image URL to the message
+	if msg.Headers == nil {
+		msg.Headers = make(map[string]string)
+	}
+	msg.Headers["image_url"] = imageURL
+
 	// Publish to NATS
 	err = publishToNATS(ctx, queueName, msg)
 	if err != nil {
@@ -122,12 +142,16 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	// Return success response
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	response := map[string]string{"status": "queued", "queue": queueName}
+	response := map[string]string{
+		"status":    "queued",
+		"queue":     queueName,
+		"image_url": imageURL,
+	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Error(ctx, "Error encoding response", "error", err)
 	}
 
-	logger.Info(ctx, "Request handled successfully", "queue", queueName, "message_id", msg.ID)
+	logger.Info(ctx, "Request handled successfully", "queue", queueName, "message_id", msg.ID, "image_url", imageURL)
 }
 
 // handleCheckMemorizer checks if a message was processed by memorizer
@@ -196,6 +220,228 @@ func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		logger.Error(ctx, "Error copying response", "error", err)
 	}
+}
+
+func searchGoogleImages(ctx context.Context, query string) (string, error) {
+	// Create a span for tracing
+	ctx, span := tracer.Start(ctx, "google.image_search", trace.WithAttributes(
+		attribute.String("search.query", query),
+	))
+	defer span.End()
+
+	browser := rod.New().
+		Timeout(20 * time.Second).
+		MustConnect()
+	defer browser.MustClose()
+
+	page := browser.MustPage()
+
+	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
+
+	err := page.Navigate(searchURL)
+	if err != nil {
+		logger.Error(ctx, "Failed to navigate to Google Images", "error", err)
+	}
+
+	err = page.WaitStable(2 * time.Second)
+	if err != nil {
+		logger.Error(ctx, "Failed to wait for page to be stable", "error", err)
+	}
+
+	consentButtonSelectors := []string{
+		"button#L2AGLb",
+		"[aria-label='Accept all']",
+		"[aria-label='Aceitar tudo']",
+		"button.tHlp8d",
+		"form:nth-child(2) button",
+		"div.VDity button:first-child",
+		"button:contains('Accept')",
+		"button:contains('I agree')",
+	}
+
+	for _, selector := range consentButtonSelectors {
+		err := rod.Try(func() {
+			el := page.MustElement(selector)
+			el.MustClick()
+		})
+		if err == nil {
+			logger.Info(ctx, "Accepted cookies using selector", "selector", selector)
+			break
+		}
+	}
+
+	time.Sleep(1 * time.Second)
+	page.MustWaitLoad()
+
+	var imgURL string
+
+	// Look specifically for images with base64 src attributes
+	err = rod.Try(func() {
+		elements, err := page.Elements("img[src^='data:image/']")
+		if err != nil {
+			logger.Error(ctx, "Failed to find base64 image elements", "error", err)
+			return
+		}
+
+		logger.Debug(ctx, "Found base64 images", "count", len(elements))
+
+		if len(elements) > 0 {
+			var targetElement *rod.Element
+
+			// DUMP ALL DEBUG
+			for i, el := range elements {
+				logger.Debug(ctx, "Using image", "index", i)
+				src, _ := el.Attribute("src")
+				alt, _ := el.Attribute("alt")
+				class, _ := el.Attribute("class")
+				id, _ := el.Attribute("id")
+
+				srcValue := "nil"
+				if src != nil {
+					// Truncate base64 data to prevent log flooding
+					if len(*src) > 100 {
+						srcValue = (*src)[:20] + "..."
+					} else {
+						srcValue = *src
+					}
+				}
+
+				altValue := "nil"
+				if alt != nil {
+					altValue = *alt
+				}
+
+				classValue := "nil"
+				if class != nil {
+					classValue = *class
+				}
+
+				idValue := "nil"
+				if id != nil {
+					idValue = *id
+				}
+
+				// Also try to get the HTML content
+				html, _ := el.HTML()
+
+				logger.Debug(ctx, "Image element details",
+					"index", i,
+					"src", srcValue,
+					"alt", altValue,
+					"class", classValue,
+					"id", idValue,
+					"html", html)
+
+				targetElement = el
+				break
+			}
+
+			if targetElement == nil && len(elements) > 0 {
+				logger.Debug(ctx, "Using first available image as fallback")
+				targetElement = elements[0]
+			}
+
+			if targetElement != nil {
+				// Click on the image to open the full-size view
+				logger.Debug(ctx, "Clicking on image to open full-size view")
+				targetElement.MustClick()
+
+				// Wait for the modal to load
+				time.Sleep(3 * time.Second)
+
+				// Take a screenshot after clicking
+				page.MustScreenshot("after_click.png")
+				logger.Debug(ctx, "Took screenshot after clicking image", "file", "after_click.png")
+
+				// Now try to find the full-size image URL from the modal
+				// There are several possible selectors for the full-size image
+				fullSizeSelectors := []struct {
+					selector string
+					attr     string
+				}{
+					{".n3VNCb", "src"},               // Common selector for full-size image
+					{".KAlRDb", "src"},               // Alternative selector
+					{"img.iPVvYb", "src"},            // Another common class
+					{"img.r48jcc", "src"},            // Another image class
+					{"img.tXlD8e", "src"},            // Yet another image class
+					{"img.pxhXjf", "src"},            // One more image class
+					{".tvh9oe", "src"},               // Container with image
+					{".eJH8qd img", "src"},           // Parent container with image
+					{"a[href^='http'] img", "src"},   // Image inside a link
+					{".islrc.isv-r img", "data-src"}, // Data-src attribute
+				}
+
+				for _, sel := range fullSizeSelectors {
+					err := rod.Try(func() {
+						el := page.MustElement(sel.selector)
+						attr, err := el.Attribute(sel.attr)
+						if err == nil && attr != nil && *attr != "" {
+							value := *attr
+							// Skip base64 images and Google logos
+							if !strings.HasPrefix(value, "data:") &&
+								!strings.Contains(value, "googlelogo") &&
+								!strings.Contains(value, "gstatic.com") {
+								imgURL = value
+								logger.Debug(ctx, "Found full-size image URL",
+									"selector", sel.selector,
+									"attribute", sel.attr,
+									"url", imgURL)
+							}
+						}
+					})
+
+					if err == nil && imgURL != "" {
+						break
+					}
+				}
+
+				// If we still don't have an image URL, try to find it in any img tag
+				if imgURL == "" {
+					logger.Debug(ctx, "Trying to find any image with a valid src in the modal")
+					elements, err := page.Elements("img[src^='http']")
+					if err == nil && len(elements) > 0 {
+						for _, el := range elements {
+							src, err := el.Attribute("src")
+							if err == nil && src != nil && *src != "" {
+								// Skip Google UI elements
+								if !strings.Contains(*src, "googlelogo") &&
+									!strings.Contains(*src, "gstatic.com") &&
+									!strings.Contains(*src, "ui/") {
+									imgURL = *src
+									logger.Debug(ctx, "Found image from generic search", "url", imgURL)
+									break
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	})
+	if err != nil {
+		logger.Error(ctx, "Failed to select base64 image element", "error", err)
+	}
+
+	if imgURL == "" {
+		html, err := page.HTML()
+		if err == nil {
+			// Look for imgurl parameter in the HTML
+			imgURLPattern := `imgurl=(http[^&"]+)`
+			re := regexp.MustCompile(imgURLPattern)
+			matches := re.FindStringSubmatch(html)
+			if len(matches) > 1 {
+				encodedURL := matches[1]
+				decodedURL, err := url.QueryUnescape(encodedURL)
+				if err == nil {
+					imgURL = decodedURL
+					logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
+				}
+			}
+		}
+	}
+
+	logger.Info(ctx, "Returning image URL", "url", imgURL)
+	return imgURL, nil
 }
 
 func main() {
