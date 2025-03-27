@@ -289,132 +289,133 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 			var targetElement *rod.Element
 
 			// DUMP ALL DEBUG
-			// for i, el := range elements {
-			// 	logger.Debug(ctx, "Using image", "index", i)
-			// 	src, _ := el.Attribute("src")
-			// 	alt, _ := el.Attribute("alt")
-			// 	class, _ := el.Attribute("class")
-			// 	id, _ := el.Attribute("id")
+			for i, el := range elements {
+				logger.Debug(ctx, "Using image", "index", i)
+				src, _ := el.Attribute("src")
+				alt, _ := el.Attribute("alt")
+				class, _ := el.Attribute("class")
+				id, _ := el.Attribute("id")
 
-			// 	srcValue := "nil"
-			// 	if src != nil {
-			// 		// Truncate base64 data to prevent log flooding
-			// 		if len(*src) > 100 {
-			// 			srcValue = (*src)[:20] + "..."
-			// 		} else {
-			// 			srcValue = *src
-			// 		}
-			// 	}
-
-			// 	altValue := "nil"
-			// 	if alt != nil {
-			// 		altValue = *alt
-			// 	}
-
-			// 	classValue := "nil"
-			// 	if class != nil {
-			// 		classValue = *class
-			// 	}
-
-			// 	idValue := "nil"
-			// 	if id != nil {
-			// 		idValue = *id
-			// 	}
-
-			// 	// Also try to get the HTML content
-			// 	html, _ := el.HTML()
-
-			// 	logger.Debug(ctx, "Image element details",
-			// 		"index", i,
-			// 		"src", srcValue,
-			// 		"alt", altValue,
-			// 		"class", classValue,
-			// 		"id", idValue,
-			// 		"html", html)
-
-			// 	targetElement = el
-			// 	break
-			// }
-
-			// if targetElement == nil && len(elements) > 0 {
-			// 	logger.Debug(ctx, "Using first available image as fallback")
-			// 	targetElement = elements[0]
-			// }
-
-			// Click on the image to open the full-size view
-			logger.Debug(ctx, "Clicking on image to open full-size view")
-			targetElement.MustClick()
-
-			// Wait for the modal to load
-			time.Sleep(3 * time.Second)
-
-			// Take a screenshot after clicking
-			page.MustScreenshot("after_click.png")
-			logger.Debug(ctx, "Took screenshot after clicking image", "file", "after_click.png")
-
-			// Now try to find the full-size image URL from the modal
-			// There are several possible selectors for the full-size image
-			fullSizeSelectors := []struct {
-				selector string
-				attr     string
-			}{
-				{".n3VNCb", "src"},               // Common selector for full-size image
-				{".KAlRDb", "src"},               // Alternative selector
-				{"img.iPVvYb", "src"},            // Another common class
-				{"img.r48jcc", "src"},            // Another image class
-				{"img.tXlD8e", "src"},            // Yet another image class
-				{"img.pxhXjf", "src"},            // One more image class
-				{".tvh9oe", "src"},               // Container with image
-				{".eJH8qd img", "src"},           // Parent container with image
-				{"a[href^='http'] img", "src"},   // Image inside a link
-				{".islrc.isv-r img", "data-src"}, // Data-src attribute
-			}
-
-			for _, sel := range fullSizeSelectors {
-				err := rod.Try(func() {
-					el := page.MustElement(sel.selector)
-					attr, err := el.Attribute(sel.attr)
-					if err == nil && attr != nil && *attr != "" {
-						value := *attr
-						// Skip base64 images and Google logos
-						if !strings.HasPrefix(value, "data:") &&
-							!strings.Contains(value, "googlelogo") &&
-							!strings.Contains(value, "gstatic.com") {
-							imgURL = value
-							logger.Debug(ctx, "Found full-size image URL",
-								"selector", sel.selector,
-								"attribute", sel.attr,
-								"url", imgURL)
-						}
+				srcValue := "nil"
+				if src != nil {
+					// Truncate base64 data to prevent log flooding
+					if len(*src) > 100 {
+						srcValue = (*src)[:20] + "..."
+					} else {
+						srcValue = *src
 					}
-				})
-
-				if err == nil && imgURL != "" {
-					break
 				}
+
+				altValue := "nil"
+				if alt != nil {
+					altValue = *alt
+				}
+
+				classValue := "nil"
+				if class != nil {
+					classValue = *class
+				}
+
+				idValue := "nil"
+				if id != nil {
+					idValue = *id
+				}
+
+				// Also try to get the HTML content
+				html, _ := el.HTML()
+
+				logger.Debug(ctx, "Image element details",
+					"index", i,
+					"src", srcValue,
+					"alt", altValue,
+					"class", classValue,
+					"id", idValue,
+					"html", html)
+
+				targetElement = el
+				break
 			}
 
-			// If we still don't have an image URL, try to find it in any img tag
-			if imgURL == "" {
-				logger.Debug(ctx, "Trying to find any image with a valid src in the modal")
-				elements, err := page.Elements("img[src^='http']")
-				if err == nil && len(elements) > 0 {
-					for _, el := range elements {
-						src, err := el.Attribute("src")
-						if err == nil && src != nil && *src != "" {
-							// Skip Google UI elements
-							if !strings.Contains(*src, "googlelogo") &&
-								!strings.Contains(*src, "gstatic.com") &&
-								!strings.Contains(*src, "ui/") {
-								imgURL = *src
-								logger.Debug(ctx, "Found image from generic search", "url", imgURL)
-								break
+			if targetElement == nil && len(elements) > 0 {
+				logger.Debug(ctx, "Using first available image as fallback")
+				targetElement = elements[0]
+			}
+
+			if targetElement != nil {
+				// Click on the image to open the full-size view
+				logger.Debug(ctx, "Clicking on image to open full-size view")
+				targetElement.MustClick()
+
+				// Wait for the modal to load
+				time.Sleep(3 * time.Second)
+
+				// Take a screenshot after clicking
+				page.MustScreenshot("after_click.png")
+				logger.Debug(ctx, "Took screenshot after clicking image", "file", "after_click.png")
+
+				// Now try to find the full-size image URL from the modal
+				// There are several possible selectors for the full-size image
+				fullSizeSelectors := []struct {
+					selector string
+					attr     string
+				}{
+					{".n3VNCb", "src"},               // Common selector for full-size image
+					{".KAlRDb", "src"},               // Alternative selector
+					{"img.iPVvYb", "src"},            // Another common class
+					{"img.r48jcc", "src"},            // Another image class
+					{"img.tXlD8e", "src"},            // Yet another image class
+					{"img.pxhXjf", "src"},            // One more image class
+					{".tvh9oe", "src"},               // Container with image
+					{".eJH8qd img", "src"},           // Parent container with image
+					{"a[href^='http'] img", "src"},   // Image inside a link
+					{".islrc.isv-r img", "data-src"}, // Data-src attribute
+				}
+
+				for _, sel := range fullSizeSelectors {
+					err := rod.Try(func() {
+						el := page.MustElement(sel.selector)
+						attr, err := el.Attribute(sel.attr)
+						if err == nil && attr != nil && *attr != "" {
+							value := *attr
+							// Skip base64 images and Google logos
+							if !strings.HasPrefix(value, "data:") &&
+								!strings.Contains(value, "googlelogo") &&
+								!strings.Contains(value, "gstatic.com") {
+								imgURL = value
+								logger.Debug(ctx, "Found full-size image URL",
+									"selector", sel.selector,
+									"attribute", sel.attr,
+									"url", imgURL)
+							}
+						}
+					})
+
+					if err == nil && imgURL != "" {
+						break
+					}
+				}
+
+				// If we still don't have an image URL, try to find it in any img tag
+				if imgURL == "" {
+					logger.Debug(ctx, "Trying to find any image with a valid src in the modal")
+					elements, err := page.Elements("img[src^='http']")
+					if err == nil && len(elements) > 0 {
+						for _, el := range elements {
+							src, err := el.Attribute("src")
+							if err == nil && src != nil && *src != "" {
+								// Skip Google UI elements
+								if !strings.Contains(*src, "googlelogo") &&
+									!strings.Contains(*src, "gstatic.com") &&
+									!strings.Contains(*src, "ui/") {
+									imgURL = *src
+									logger.Debug(ctx, "Found image from generic search", "url", imgURL)
+									break
+								}
 							}
 						}
 					}
 				}
 			}
-
 		}
 	})
 	if err != nil {
