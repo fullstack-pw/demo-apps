@@ -96,6 +96,14 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		"trace_id", traceID,
 	)
 
+	if headers != nil {
+		if imageURL, ok := headers["image_url"]; ok {
+			logger.Info(ctx, "Storing message with image URL in PostgreSQL",
+				"id", id,
+				"image_url", imageURL)
+			span.SetAttributes(attribute.String("message.image_url", imageURL))
+		}
+	}
 	// Execute the query
 	_, err := postgresConn.ExecuteWithTracing(ctx, query, id, content, "redis", headersJSON, traceID)
 	if err != nil {
@@ -127,7 +135,6 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		attribute.String("redis.key", key),
 	))
 	defer span.End()
-
 	logger.Debug(ctx, "Processing Redis message", "key", key, "value", value)
 
 	// Try to parse the message as JSON
@@ -153,7 +160,15 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 			id = strings.TrimPrefix(key, "msg:")
 		}
 	}
-
+	if message.Headers != nil {
+		if imageURL, ok := message.Headers["image_url"]; ok {
+			logger.Info(ctx, "Processing message with image URL",
+				"id", message.ID,
+				"key", key,
+				"image_url", imageURL)
+			span.SetAttributes(attribute.String("message.image_url", imageURL))
+		}
+	}
 	// Write to PostgreSQL
 	logger.Debug(ctx, "Writing to PostgreSQL", "id", id, "content", content)
 	err = writeToPostgres(ctx, id, content, headers)
