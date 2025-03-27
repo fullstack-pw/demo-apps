@@ -342,7 +342,6 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 				logger.Debug(ctx, "Clicking on image to open full-size view")
 				err = rod.Try(func() {
 					el.MustClick()
-					logger.Debug(ctx, "Successfully clicked first element")
 				})
 				if err != nil {
 					logger.Error(ctx, "Element index: ", "error", i)
@@ -388,17 +387,103 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 				if err != nil {
 					break
 				}
+				logger.Debug(ctx, "Successfully clicked first element")
 				// Wait for the modal to load
-				time.Sleep(3 * time.Second)
+				page.MustWaitLoad()
+				// time.Sleep(1 * time.Second)
 
-				// Take a screenshot after clicking
-				err = rod.Try(func() {
-					page.MustScreenshot("after_click.png")
-					logger.Debug(ctx, "Took screenshot after clicking image")
-				})
+				// DEBUGGING SESSION
+				fmt.Println("############################################################")
+				fmt.Println("STARTING ITERATION ON PAGE ELEMENTS AFTER CLICKING IMAGE")
+				fmt.Println("############################################################")
+				elementos, err := page.Elements("*")
+				for dbgindice, elemento := range elementos {
+					dbgsrc, _ := elemento.Attribute("src")
+					dbgalt, _ := elemento.Attribute("alt")
+					dbgheight, _ := elemento.Attribute("height")
+					dbgwidth, _ := elemento.Attribute("width")
+					dbgclass, _ := elemento.Attribute("class")
+					dbgid, _ := elemento.Attribute("id")
+					dbgsrcValue := "nil"
+					if dbgsrc != nil {
+						if len(*src) > 100 {
+							dbgsrcValue = (*src)[:20] + "..."
+						} else {
+							dbgsrcValue = *src
+						}
+					}
+					dbgaltValue := "nil"
+					if dbgalt != nil {
+						dbgaltValue = *alt
+					}
+					dbgheightValue := "nil"
+					if dbgheight != nil {
+						dbgheightValue = *height
+					}
+					dbgwidthValue := "nil"
+					if dbgwidth != nil {
+						dbgwidthValue = *width
+					}
+					dbgclassValue := "nil"
+					if dbgclass != nil {
+						dbgclassValue = *class
+					}
+					dbgidValue := "nil"
+					if dbgid != nil {
+						dbgidValue = *id
+					}
+					dbghtml, _ := el.HTML()
+					dbgintheight, err := strconv.Atoi(dbgheightValue)
+					if err != nil {
+					}
+					dbgintwidth, err := strconv.Atoi(dbgwidthValue)
+					if err != nil {
+					}
+					if dbgintheight < 200 || dbgintwidth < 200 {
+						//logger.Debug(ctx, "Small element, skipping and selecting next one...")
+						continue
+					}
+					logger.Debug(ctx, "Image element details",
+						"index", dbgindice,
+						"src", dbgsrcValue,
+						"alt", dbgaltValue,
+						"height", dbgheightValue,
+						"width", dbgwidthValue,
+						"class", dbgclassValue,
+						"id", dbgidValue,
+						"html", dbghtml)
+				}
 				if err != nil {
-					logger.Error(ctx, "Error taking screenshot after clicking image: ", "error", err)
-					// break
+					logger.Error(ctx, "Error on debug session: ", err)
+				}
+				// DEBUGGING
+				maxAttempts := 3
+				var success bool
+
+				for attempt := 1; attempt <= maxAttempts; attempt++ {
+					err = rod.Try(func() {
+						page.MustScreenshot("after_click.png")
+						logger.Debug(ctx, "Took screenshot after clicking image")
+						success = true
+					})
+
+					if success {
+						break
+					}
+
+					if err != nil {
+						logger.Error(ctx, fmt.Sprintf("Error taking screenshot after clicking image (attempt %d/%d): ", attempt, maxAttempts), "error", err)
+
+						// If this was the last attempt, handle the final failure
+						if attempt == maxAttempts {
+							logger.Error(ctx, "Failed to take screenshot after 10 attempts")
+							// Handle final failure case here
+							break
+						}
+
+						// Optional: add a small delay between attempts
+						time.Sleep(1000 * time.Millisecond)
+					}
 				}
 
 				// Now try to find the full-size image URL from the modal
@@ -445,9 +530,10 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 
 				if imgURL == "" {
 					selector := fmt.Sprintf("img[src^='http'][alt='%s']", altValue)
-					fmt.Sprintf("img[src^='http'][alt='%s']", altValue)
-					logger.Debug(ctx, "Trying to find any image with a valid src in the modal with this selector: %s", selector)
-					elements, err := page.Elements(selector)
+					fmt.Println(selector)
+					fmt.Printf("\nTrying to find any image with a valid src in the modal with this selector: %s\n\n", selector)
+					elements, err = page.Elements(selector)
+					fmt.Println(len(elements))
 					if err == nil && len(elements) > 0 {
 						logger.Debug(ctx, "Iterating elements trying to find the image URL")
 						for _, el := range elements {
@@ -463,8 +549,7 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 								}
 							}
 						}
-					}
-					if err != nil {
+					} else {
 						logger.Error(ctx, "Error trying to find any image with a valid src in the modal: ", "error", err)
 						break
 					}
