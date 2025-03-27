@@ -322,7 +322,13 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 				}
 				html, _ := el.HTML()
 				intheight, err := strconv.Atoi(heightValue)
+				if err != nil {
+					logger.Error(ctx, "Error trying to get image heigh")
+				}
 				intwidth, err := strconv.Atoi(widthValue)
+				if err != nil {
+					logger.Error(ctx, "Error trying to get image width")
+				}
 				if intheight < 100 || intwidth < 100 {
 					logger.Debug(ctx, "Small element, skipping and selecting next one...")
 					continue
@@ -343,136 +349,26 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 					el.MustClick()
 				})
 				if err != nil {
-					logger.Error(ctx, "Element index: ", "error", i)
-					logger.Error(ctx, "Failed to click first element, trying parent element", "error", err)
-					err = rod.Try(func() {
-						parent := el.MustParent()
-						parent.MustClick()
-						logger.Debug(ctx, "Successfully clicked parent element")
-					})
-					if err != nil {
-						logger.Error(ctx, "Failed to click parent second, trying parent third element", "error", err)
-						err = rod.Try(func() {
-							grandparent := el.MustParent().MustParent()
-							grandparent.MustClick()
-							logger.Debug(ctx, "Successfully clicked parent third element")
-						})
-						if err != nil {
-							logger.Error(ctx, "Failed to click parent third, trying parent fourth element", "error", err)
-							err = rod.Try(func() {
-								grandparent := el.MustParent().MustParent().MustParent()
-								grandparent.MustClick()
-								logger.Debug(ctx, "Successfully clicked parent fourth element")
-							})
-							if err != nil {
-								logger.Error(ctx, "Failed to click parent fourth, trying parent fifth element", "error", err)
-								err = rod.Try(func() {
-									grandparent := el.MustParent().MustParent().MustParent().MustParent()
-									grandparent.MustClick()
-									logger.Debug(ctx, "Successfully clicked parent fifth element")
-								})
-								if err != nil {
-									logger.Error(ctx, "Failed to click parent fifth, trying parent sixt element", "error", err)
-									err = rod.Try(func() {
-										grandparent := el.MustParent().MustParent().MustParent().MustParent().MustParent()
-										grandparent.MustClick()
-										logger.Debug(ctx, "Successfully clicked parent sixt element")
-									})
-								}
-							}
-						}
-					}
-				}
-				if err != nil {
 					break
 				}
 				logger.Debug(ctx, "Successfully clicked first element")
-				// Wait for the modal to load
 				page.MustWaitLoad()
-				// time.Sleep(1 * time.Second)
 
-				// DEBUGGING SESSION
-				fmt.Println("############################################################")
-				fmt.Println("STARTING ITERATION ON PAGE ELEMENTS AFTER CLICKING IMAGE")
-				fmt.Println("############################################################")
-				elementos, err := page.Elements("img[src^='https']")
-				for dbgindice, elemento := range elementos {
-					dbgsrc, _ := elemento.Attribute("src")
-					dbgalt, _ := elemento.Attribute("alt")
-					dbgheight, _ := elemento.Attribute("height")
-					dbgwidth, _ := elemento.Attribute("width")
-					dbgclass, _ := elemento.Attribute("class")
-					dbgid, _ := elemento.Attribute("id")
-					dbgsrcValue := "nil"
-					if dbgsrc != nil {
-						if len(*src) > 100 {
-							dbgsrcValue = (*src)[:20] + "..."
-						} else {
-							dbgsrcValue = *src
-						}
-					}
-					dbgaltValue := "nil"
-					if dbgalt != nil {
-						dbgaltValue = *alt
-					}
-					dbgheightValue := "nil"
-					if dbgheight != nil {
-						dbgheightValue = *height
-					}
-					dbgwidthValue := "nil"
-					if dbgwidth != nil {
-						dbgwidthValue = *width
-					}
-					dbgclassValue := "nil"
-					if dbgclass != nil {
-						dbgclassValue = *class
-					}
-					dbgidValue := "nil"
-					if dbgid != nil {
-						dbgidValue = *id
-					}
-					dbghtml, _ := el.HTML()
-					// dbgintheight, err := strconv.Atoi(dbgheightValue)
-					if err != nil {
-					}
-					// dbgintwidth, err := strconv.Atoi(dbgwidthValue)
-					if err != nil {
-					}
-					// if dbgintheight < 200 || dbgintwidth < 200 {
-					// 	logger.Debug(ctx, "Small element, skipping and selecting next one...")
-					// 	continue
-					// } else {
-					logger.Debug(ctx, "Image element details",
-						"index", dbgindice,
-						"src", dbgsrcValue,
-						"alt", dbgaltValue,
-						"height", dbgheightValue,
-						"width", dbgwidthValue,
-						"class", dbgclassValue,
-						"id", dbgidValue,
-						"html", dbghtml)
-					// }
-					html, err := page.HTML()
-					if err == nil {
-						// Look for imgurl parameter in the HTML
-						imgURLPattern := `imgurl=(http[^&"]+)`
-						re := regexp.MustCompile(imgURLPattern)
-						matches := re.FindStringSubmatch(html)
-						if len(matches) > 1 {
-							encodedURL := matches[1]
-							decodedURL, err := url.QueryUnescape(encodedURL)
-							if err == nil {
-								imgURL = decodedURL
-								logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
-								break
-							}
+				html, err = page.HTML()
+				if err == nil {
+					imgURLPattern := `imgurl=(http[^&"]+)`
+					re := regexp.MustCompile(imgURLPattern)
+					matches := re.FindStringSubmatch(html)
+					if len(matches) > 1 {
+						encodedURL := matches[1]
+						decodedURL, err := url.QueryUnescape(encodedURL)
+						if err == nil {
+							imgURL = decodedURL
+							logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
+							break
 						}
 					}
 				}
-				if err != nil {
-					logger.Error(ctx, "Error on debug session: ", err)
-				}
-				// DEBUGGING
 				maxAttempts := 3
 				var success bool
 
