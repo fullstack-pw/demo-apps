@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -282,76 +283,123 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 			logger.Error(ctx, "Failed to find base64 image elements", "error", err)
 			return
 		}
-
 		logger.Debug(ctx, "Found base64 images", "count", len(elements))
-
 		if len(elements) > 0 {
-			var targetElement *rod.Element
-
-			// DUMP ALL DEBUG
 			for i, el := range elements {
-				logger.Debug(ctx, "Using image", "index", i)
+				// DEBUGGING SESSION
 				src, _ := el.Attribute("src")
 				alt, _ := el.Attribute("alt")
+				height, _ := el.Attribute("height")
+				width, _ := el.Attribute("width")
 				class, _ := el.Attribute("class")
 				id, _ := el.Attribute("id")
-
 				srcValue := "nil"
 				if src != nil {
-					// Truncate base64 data to prevent log flooding
 					if len(*src) > 100 {
 						srcValue = (*src)[:20] + "..."
 					} else {
 						srcValue = *src
 					}
 				}
-
 				altValue := "nil"
 				if alt != nil {
 					altValue = *alt
 				}
-
+				heightValue := "nil"
+				if height != nil {
+					heightValue = *height
+				}
+				widthValue := "nil"
+				if width != nil {
+					widthValue = *width
+				}
 				classValue := "nil"
 				if class != nil {
 					classValue = *class
 				}
-
 				idValue := "nil"
 				if id != nil {
 					idValue = *id
 				}
-
-				// Also try to get the HTML content
 				html, _ := el.HTML()
-
+				intheight, err := strconv.Atoi(heightValue)
+				intwidth, err := strconv.Atoi(widthValue)
+				if intheight < 100 || intwidth < 100 {
+					logger.Debug(ctx, "Small element, skipping and selecting next one...")
+					continue
+				}
 				logger.Debug(ctx, "Image element details",
 					"index", i,
 					"src", srcValue,
 					"alt", altValue,
+					"height", heightValue,
+					"width", widthValue,
 					"class", classValue,
 					"id", idValue,
 					"html", html)
+				// DEBUGGING
 
-				targetElement = el
-				break
-			}
-
-			if targetElement == nil && len(elements) > 0 {
-				logger.Debug(ctx, "Using first available image as fallback")
-				targetElement = elements[0]
-			}
-
-			if targetElement != nil {
-				// Click on the image to open the full-size view
 				logger.Debug(ctx, "Clicking on image to open full-size view")
-				targetElement.MustClick()
-
+				err = rod.Try(func() {
+					el.MustClick()
+					logger.Debug(ctx, "Successfully clicked first element")
+				})
+				if err != nil {
+					logger.Error(ctx, "Element index: ", "error", i)
+					logger.Error(ctx, "Failed to click first element, trying parent element", "error", err)
+					err = rod.Try(func() {
+						parent := el.MustParent()
+						parent.MustClick()
+						logger.Debug(ctx, "Successfully clicked parent element")
+					})
+					if err != nil {
+						logger.Error(ctx, "Failed to click parent second, trying parent third element", "error", err)
+						err = rod.Try(func() {
+							grandparent := el.MustParent().MustParent()
+							grandparent.MustClick()
+							logger.Debug(ctx, "Successfully clicked parent third element")
+						})
+						if err != nil {
+							logger.Error(ctx, "Failed to click parent third, trying parent fourth element", "error", err)
+							err = rod.Try(func() {
+								grandparent := el.MustParent().MustParent().MustParent()
+								grandparent.MustClick()
+								logger.Debug(ctx, "Successfully clicked parent fourth element")
+							})
+							if err != nil {
+								logger.Error(ctx, "Failed to click parent fourth, trying parent fifth element", "error", err)
+								err = rod.Try(func() {
+									grandparent := el.MustParent().MustParent().MustParent().MustParent()
+									grandparent.MustClick()
+									logger.Debug(ctx, "Successfully clicked parent fifth element")
+								})
+								if err != nil {
+									logger.Error(ctx, "Failed to click parent fifth, trying parent sixt element", "error", err)
+									err = rod.Try(func() {
+										grandparent := el.MustParent().MustParent().MustParent().MustParent().MustParent()
+										grandparent.MustClick()
+										logger.Debug(ctx, "Successfully clicked parent sixt element")
+									})
+								}
+							}
+						}
+					}
+				}
+				if err != nil {
+					break
+				}
 				// Wait for the modal to load
 				time.Sleep(3 * time.Second)
 
 				// Take a screenshot after clicking
-				page.MustScreenshot("after_click.png")
-				logger.Debug(ctx, "Took screenshot after clicking image", "file", "after_click.png")
+				err = rod.Try(func() {
+					page.MustScreenshot("after_click.png")
+					logger.Debug(ctx, "Took screenshot after clicking image")
+				})
+				if err != nil {
+					logger.Error(ctx, "Error taking screenshot after clicking image: ", "error", err)
+					// break
+				}
 
 				// Now try to find the full-size image URL from the modal
 				// There are several possible selectors for the full-size image
@@ -395,11 +443,13 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 					}
 				}
 
-				// If we still don't have an image URL, try to find it in any img tag
 				if imgURL == "" {
-					logger.Debug(ctx, "Trying to find any image with a valid src in the modal")
-					elements, err := page.Elements("img[src^='http']")
+					selector := fmt.Sprintf("img[src^='http'][alt='%s']", altValue)
+					fmt.Sprintf("img[src^='http'][alt='%s']", altValue)
+					logger.Debug(ctx, "Trying to find any image with a valid src in the modal with this selector: %s", selector)
+					elements, err := page.Elements(selector)
 					if err == nil && len(elements) > 0 {
+						logger.Debug(ctx, "Iterating elements trying to find the image URL")
 						for _, el := range elements {
 							src, err := el.Attribute("src")
 							if err == nil && src != nil && *src != "" {
@@ -414,6 +464,11 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 							}
 						}
 					}
+					if err != nil {
+						logger.Error(ctx, "Error trying to find any image with a valid src in the modal: ", "error", err)
+						break
+					}
+
 				}
 			}
 		}
