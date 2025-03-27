@@ -21,6 +21,7 @@ import (
 	"github.com/fullstack-pw/shared/server"
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -229,25 +230,87 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/google-chrome" // Default path for our container
+	}
+
+	logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
+
+	// Use a very basic approach - create a launcher with just essential flags
+	logger.Info(ctx, "Creating Chrome launcher")
+	u, err := launcher.New().
+		Bin(chromePath).
+		Headless(true).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "").
+		Launch()
+
+	if err != nil {
+		logger.Error(ctx, "Failed to launch Chrome", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Chrome launched successfully", "control_url", u)
+
+	// Create browser instance
 	browser := rod.New().
-		Timeout(20 * time.Second).
-		MustConnect()
-	defer browser.MustClose()
+		ControlURL(u).
+		Timeout(30 * time.Second)
 
-	page := browser.MustPage()
+	err = browser.Connect()
+	if err != nil {
+		logger.Error(ctx, "Failed to connect to Chrome", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
 
+	logger.Info(ctx, "Successfully connected to browser")
+	defer browser.Close()
+
+	// Create page
+	var page *rod.Page
+	err = rod.Try(func() {
+		page = browser.MustPage()
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to create page", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Page created successfully")
+
+	// Navigate to Google Images search
 	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
+	logger.Info(ctx, "Navigating to search URL", "url", searchURL)
 
-	err := page.Navigate(searchURL)
+	err = rod.Try(func() {
+		page.MustNavigate(searchURL)
+	})
+
 	if err != nil {
-		logger.Error(ctx, "Failed to navigate to Google Images", "error", err)
+		logger.Error(ctx, "Failed to navigate to URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
 	}
 
-	err = page.WaitStable(2 * time.Second)
+	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
+
+	// Wait for page to stabilize
+	err = rod.Try(func() {
+		err = page.WaitStable(2 * time.Second)
+	})
+
 	if err != nil {
-		logger.Error(ctx, "Failed to wait for page to be stable", "error", err)
+		logger.Error(ctx, "Failed to wait for page stability", "error", fmt.Sprintf("%v", err))
 	}
 
+	// Try to handle cookie consent dialogs
 	consentButtonSelectors := []string{
 		"button#L2AGLb",
 		"[aria-label='Accept all']",
@@ -263,19 +326,25 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 		err := rod.Try(func() {
 			el := page.MustElement(selector)
 			el.MustClick()
+			logger.Info(ctx, "Clicked consent button", "selector", selector)
 		})
 		if err == nil {
-			logger.Info(ctx, "Accepted cookies using selector", "selector", selector)
 			break
 		}
 	}
 
+	// Wait a bit for the page to load images
 	time.Sleep(1 * time.Second)
-	page.MustWaitLoad()
+	err = rod.Try(func() {
+		page.MustWaitLoad()
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to wait for page load", "error", fmt.Sprintf("%v", err))
+	}
 
 	var imgURL string
 
-	// Look specifically for images with base64 src attributes
 	err = rod.Try(func() {
 		elements, err := page.Elements("img[src^='data:image/']")
 		if err != nil {
