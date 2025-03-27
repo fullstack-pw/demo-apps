@@ -254,7 +254,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 			}
 
 			// Only process keys with our prefix
-			if !strings.HasPrefix(key, "msg:") {
+			if !strings.HasPrefix(key, "msg-") {
 				logger.Debug(ctx, "Ignoring key without msg: prefix", "key", key)
 				continue
 			}
