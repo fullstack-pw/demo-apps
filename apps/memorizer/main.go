@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -35,10 +36,11 @@ type Message struct {
 
 var (
 	// Global variables
-	natsConn  *connections.NATSConnection
-	redisConn *connections.RedisConnection
-	logger    *logging.Logger
-	tracer    = tracing.GetTracer("memorizer")
+	natsConn           *connections.NATSConnection
+	redisConn          *connections.RedisConnection
+	logger             *logging.Logger
+	tracer             = tracing.GetTracer("memorizer")
+	asciiConverterPath string // Path to the ASCII converter script
 )
 
 // Update the function signature to include headers
@@ -368,6 +370,84 @@ func executeScript(ctx context.Context, scriptPath string, args ...string) (stri
 	return output, nil
 }
 
+// setupAsciiConverter creates the Python script for ASCII conversion
+func setupAsciiConverter() (string, error) {
+	// Script content
+	scriptContent := `#!/usr/bin/env python3
+import sys
+import os
+import json
+import ascii_magic
+import argparse
+
+def convert_image_to_ascii(image_path, columns=80, back='black'):
+    """
+    Convert an image to ASCII art
+    
+    Args:
+        image_path: Path to the image file
+        columns: Width of the ASCII art in characters
+        back: Background color
+        
+    Returns:
+        ASCII art string
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+        # Convert image to ASCII art
+        output = ascii_magic.from_image_file(
+            image_path,
+            columns=columns,
+            mode=ascii_magic.Modes.ASCII,
+            back=back
+        )
+        
+        # Convert to string and return
+        return str(output)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+def main():
+    parser = argparse.ArgumentParser(description='Convert image to ASCII art')
+    parser.add_argument('image_path', help='Path to the image file')
+    parser.add_argument('--columns', type=int, default=80, help='Width of the ASCII art in characters')
+    parser.add_argument('--back', default='black', help='Background color')
+    
+    args = parser.parse_args()
+    
+    result = convert_image_to_ascii(args.image_path, args.columns, args.back)
+    print(result)
+
+if __name__ == "__main__":
+    main()
+`
+
+	// Create the scripts directory if it doesn't exist
+	scriptsDir := "./scripts"
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create scripts directory: %w", err)
+	}
+
+	// Path for the script
+	scriptPath := filepath.Join(scriptsDir, "ascii_converter.py")
+
+	// Write the script to a file
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		return "", fmt.Errorf("failed to write ASCII converter script: %w", err)
+	}
+
+	// Check if ascii_magic is installed, and install it if not
+	cmd := exec.Command("pip3", "install", "ascii_magic")
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to install ascii_magic: %w", err)
+	}
+
+	return scriptPath, nil
+}
+
 func main() {
 	// Create context for the application
 	ctx, cancel := context.WithCancel(context.Background())
@@ -429,6 +509,15 @@ func main() {
 			logger.Error(ctx, "Error unsubscribing from NATS", "error", err)
 		}
 	}()
+
+	// Set up ASCII converter script
+	asciiConverterPath, err = setupAsciiConverter()
+	if err != nil {
+		logger.Error(ctx, "Failed to set up ASCII converter script", "error", err)
+		// Continue without ASCII conversion capability
+	} else {
+		logger.Info(ctx, "ASCII converter script set up successfully", "path", asciiConverterPath)
+	}
 
 	// Create a server with logging middleware
 	srv := server.NewServer("memorizer",
