@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -112,6 +114,83 @@ func storeInRedis(ctx context.Context, id string, content string, headers map[st
 	span.SetStatus(codes.Ok, "Message stored successfully")
 	logger.Info(ctx, "Message stored in Redis", "key", key, "id", id)
 	return nil
+}
+
+// downloadImage downloads an image from a URL and saves it to a temporary file
+func downloadImage(ctx context.Context, imageURL string) (string, error) {
+	ctx, span := tracer.Start(ctx, "image.download", trace.WithAttributes(
+		attribute.String("image.url", imageURL),
+	))
+	defer span.End()
+
+	logger.Info(ctx, "Downloading image", "url", imageURL)
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create HTTP request")
+		logger.Error(ctx, "Failed to create HTTP request", "error", err, "url", imageURL)
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set user agent to avoid being blocked
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	// Execute request
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to download image")
+		logger.Error(ctx, "Failed to download image", "error", err, "url", imageURL)
+		return "", fmt.Errorf("failed to download image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Invalid response status")
+		logger.Error(ctx, "Invalid response status", "status", resp.StatusCode, "url", imageURL)
+		return "", err
+	}
+
+	// Check content type
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		err := fmt.Errorf("unexpected content type: %s", contentType)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Invalid content type")
+		logger.Error(ctx, "Invalid content type", "content_type", contentType, "url", imageURL)
+		return "", err
+	}
+
+	// Create temporary file
+	tempFile, err := os.CreateTemp("", "image-*.jpg")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create temporary file")
+		logger.Error(ctx, "Failed to create temporary file", "error", err)
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Save image to temporary file
+	_, err = io.Copy(tempFile, resp.Body)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to save image")
+		logger.Error(ctx, "Failed to save image to file", "error", err, "path", tempFile.Name())
+		return "", fmt.Errorf("failed to save image: %w", err)
+	}
+
+	logger.Info(ctx, "Image downloaded successfully", "url", imageURL, "path", tempFile.Name())
+	span.SetStatus(codes.Ok, "Image downloaded successfully")
+	return tempFile.Name(), nil
 }
 
 // handleMessage processes a message from NATS with tracing
