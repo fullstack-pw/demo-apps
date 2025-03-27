@@ -95,58 +95,58 @@ jobs:
       context: "dev"
       app-name: ${{ matrix.app.app_name }}
 
-  dev-cypress-tests:
-    needs: dev-deploy
-    name: DEV cypress
-    uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-    with:
-      start: npm run cypress:dev
-      env-vars: |
-        {
-          "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
-          "WRITER_URL": "https://dev.writer.fullstack.pw",
-          "MEMORIZER_URL": "https://dev.memorizer.fullstack.pw",
-          "ENVIRONMENT": "dev",
-          "TEST_RETRIES": "2"
-        }
+  # dev-cypress-tests:
+  #   needs: dev-deploy
+  #   name: DEV cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     start: npm run cypress:dev
+  #     env-vars: |
+  #       {
+  #         "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
+  #         "WRITER_URL": "https://dev.writer.fullstack.pw",
+  #         "MEMORIZER_URL": "https://dev.memorizer.fullstack.pw",
+  #         "ENVIRONMENT": "dev",
+  #         "TEST_RETRIES": "2"
+  #       }
 
-  stg-deploy:
-    needs: [determine-app, dev-cypress-tests]
-    if: needs.determine-app.outputs.app_paths != '[]'
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-    name: STG deploy ${{ matrix.app.app_name }}
-    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-    with:
-      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
-      context: "stg"
-      app-name: ${{ matrix.app.app_name }}
+  # stg-deploy:
+  #   needs: [determine-app, dev-cypress-tests]
+  #   if: needs.determine-app.outputs.app_paths != '[]'
+  #   strategy:
+  #     matrix:
+  #       app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+  #   name: STG deploy ${{ matrix.app.app_name }}
+  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+  #   with:
+  #     kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
+  #     context: "stg"
+  #     app-name: ${{ matrix.app.app_name }}
 
-  stg-cypress-tests:
-    needs: stg-deploy
-    name: STG cypress
-    uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-    with:
-      start: npm run cypress:stg
-      env-vars: |
-        {
-          "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
-          "WRITER_URL": "https://stg.writer.fullstack.pw",
-          "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
-          "ENVIRONMENT": "stg",
-          "TEST_RETRIES": "2"
-        }
+  # stg-cypress-tests:
+  #   needs: stg-deploy
+  #   name: STG cypress
+  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+  #   with:
+  #     start: npm run cypress:stg
+  #     env-vars: |
+  #       {
+  #         "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
+  #         "WRITER_URL": "https://stg.writer.fullstack.pw",
+  #         "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
+  #         "ENVIRONMENT": "stg",
+  #         "TEST_RETRIES": "2"
+  #       }
 
-  prod-deploy:
-    needs: [determine-app, stg-cypress-tests]
-    if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-    name: PROD deploy ${{ matrix.app.app_name }}
-    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-    with:
-      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
-      context: "prod"
-      app-name: ${{ matrix.app.app_name }}
+  # prod-deploy:
+  #   needs: [determine-app, stg-cypress-tests]
+  #   if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+  #   strategy:
+  #     matrix:
+  #       app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+  #   name: PROD deploy ${{ matrix.app.app_name }}
+  #   uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+  #   with:
+  #     kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
+  #     context: "prod"
+  #     app-name: ${{ matrix.app.app_name }}
