@@ -21,6 +21,7 @@ import (
 	"github.com/fullstack-pw/shared/server"
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/launcher"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -229,11 +230,28 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
-	browser := rod.New().
-		Timeout(20 * time.Second).
-		MustConnect()
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/google-chrome" // Default path for our container
+	}
+
+	logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
+
+	// Check if the chrome binary exists
+	if _, err := os.Stat(chromePath); os.IsNotExist(err) {
+		logger.Error(ctx, "Chrome binary not found at specified path", "path", chromePath)
+		return "", fmt.Errorf("chrome binary not found at %s", chromePath)
+	}
+
+	// Create a custom launcher with the specific browser path
+	u := launcher.New().Bin(chromePath).MustLaunch()
+
+	// Connect to the browser
+	browser := rod.New().ControlURL(u).MustConnect()
 	defer browser.MustClose()
 
+	// Rest of your function remains the same...
 	page := browser.MustPage()
 
 	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
