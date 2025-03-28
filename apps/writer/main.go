@@ -718,10 +718,6 @@ func main() {
 	srv.HandleFunc("/query", handleQuery)
 	srv.HandleFunc("/cleanup", handleCleanup)
 	srv.HandleFunc("/traces", handleTraces)
-	// Register handlers
-	srv.HandleFunc("/query", handleQuery)
-	srv.HandleFunc("/cleanup", handleCleanup)
-	srv.HandleFunc("/traces", handleTraces)
 	// Add new ASCII art endpoints
 	srv.HandleFunc("/ascii/terminal", handleAsciiTerminal)
 	srv.HandleFunc("/ascii/file", handleAsciiFile)
