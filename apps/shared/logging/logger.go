@@ -346,3 +346,8 @@ func attributesToMap(attrs ...interface{}) map[string]interface{} {
 
 	return result
 }
+
+// IsLevelEnabled checks if a specific level is enabled
+func (l *Logger) IsLevelEnabled(level Level) bool {
+	return level >= l.minLevel
+}

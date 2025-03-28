@@ -34,8 +34,8 @@ type Message struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+// Global variables
 var (
-	// Global variables
 	natsConn           *connections.NATSConnection
 	redisConn          *connections.RedisConnection
 	logger             *logging.Logger
@@ -618,7 +618,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("memorizer",
-		logging.WithMinLevel(logging.Debug),
+		logging.WithMinLevel(logging.Info),
 		logging.WithJSONFormat(true),
 	)
 

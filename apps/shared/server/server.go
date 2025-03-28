@@ -102,9 +102,18 @@ func (s *Server) HandleFunc(pattern string, handlerFunc http.HandlerFunc) {
 	s.mux.Handle(pattern, wrappedHandler)
 }
 
-// RegisterHealthChecks registers health check endpoints
 func (s *Server) RegisterHealthChecks(livenessCheckers, readinessCheckers []health.Checker) {
-	health.RegisterHealthEndpoints(s.mux, livenessCheckers, readinessCheckers)
+	// Determine if verbose health check logging should be enabled based on logger level
+	isDebugMode := false
+	if s.logger != nil {
+		isDebugMode = s.logger.IsLevelEnabled(logging.Debug)
+	}
+
+	healthConfig := health.HealthCheckConfig{
+		VerboseLogging: isDebugMode,
+	}
+
+	health.RegisterHealthEndpoints(s.mux, healthConfig, livenessCheckers, readinessCheckers)
 }
 
 // Start starts the server

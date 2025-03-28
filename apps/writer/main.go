@@ -29,8 +29,8 @@ type RedisMessage struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+// Global variables
 var (
-	// Global variables
 	redisConn    *connections.RedisConnection
 	postgresConn *connections.PostgresConnection
 	logger       *logging.Logger
