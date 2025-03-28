@@ -260,8 +260,8 @@ func handleMessage(msg *nats.Msg) {
 						"ascii_length", len(asciiArt))
 
 					// Log the ASCII art (this will show up in the logs)
-					logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
-
+					// logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
+					fmt.Print(asciiArt)
 					// Store in Redis
 					err = redisConn.SetWithTracing(ctx, asciiKey, asciiArt, 24*time.Hour)
 					if err != nil {
