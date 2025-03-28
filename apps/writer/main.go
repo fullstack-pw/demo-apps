@@ -156,7 +156,15 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		logger.Warn(ctx, "Message is not valid JSON, using raw value", "error", err)
 		span.SetAttributes(attribute.Bool("message.is_json", false))
 		content = value
-		id = strings.TrimPrefix(key, "msg:")
+
+		// Extract ID from the key - must handle environment prefix
+		// Format is env:msg-123, so we need to get the part after the last colon
+		parts := strings.Split(key, ":")
+		if len(parts) >= 2 {
+			id = strings.Join(parts[1:], ":")
+		} else {
+			id = key
+		}
 	} else {
 		// Valid JSON message
 		logger.Debug(ctx, "Successfully parsed JSON message", "message", message)
@@ -165,34 +173,44 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		headers = message.Headers
 		id = message.ID
 		if id == "" {
-			id = strings.TrimPrefix(key, "msg:")
+			// Extract ID from the key - must handle environment prefix
+			parts := strings.Split(key, ":")
+			if len(parts) >= 2 {
+				id = strings.Join(parts[1:], ":")
+			} else {
+				id = key
+			}
 		}
 	}
 
 	// Check for ASCII art in Redis based on message ID
 	var asciiTerminal, asciiFile, asciiHTML string
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
 
 	// Only try to retrieve ASCII art if we have a valid message ID
 	if id != "" {
 		// Check for terminal ASCII art
-		terminalKey := id + ":ascii:terminal"
-		val, err := redisConn.GetWithTracing(ctx, terminalKey)
+		terminalKey := fmt.Sprintf("%s:%s:ascii:terminal", env, id)
+		val, err := redisConn.Client().Get(ctx, terminalKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found terminal ASCII art", "id", id, "key", terminalKey)
 			asciiTerminal = val
 		}
 
 		// Check for file ASCII art
-		fileKey := id + ":ascii:file"
-		val, err = redisConn.GetWithTracing(ctx, fileKey)
+		fileKey := fmt.Sprintf("%s:%s:ascii:file", env, id)
+		val, err = redisConn.Client().Get(ctx, fileKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found file ASCII art", "id", id, "key", fileKey)
 			asciiFile = val
 		}
 
 		// Check for HTML ASCII art
-		htmlKey := id + ":ascii:html"
-		val, err = redisConn.GetWithTracing(ctx, htmlKey)
+		htmlKey := fmt.Sprintf("%s:%s:ascii:html", env, id)
+		val, err = redisConn.Client().Get(ctx, htmlKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found HTML ASCII art", "id", id, "key", htmlKey)
 			asciiHTML = val
@@ -237,6 +255,12 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 func subscribeToRedisChanges(ctx context.Context) {
 	logger.Info(ctx, "Setting up Redis keyspace notifications")
 
+	// Get environment for key prefixing
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
 	// Set up keyspace notifications if possible
 	err := redisConn.SetupRedisNotifications(ctx)
 	if err != nil {
@@ -245,8 +269,13 @@ func subscribeToRedisChanges(ctx context.Context) {
 		return
 	}
 
-	// Subscribe to keyspace notifications
-	patterns := []string{"__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg-*"}
+	// Subscribe to keyspace notifications with environment-specific patterns
+	// We need to watch for keys with the environment prefix
+	patterns := []string{
+		"__keyevent@0__:set",
+		"__keyevent@0__:hset",
+		fmt.Sprintf("__keyspace@0__:%s:msg-*", env), // Environment-specific prefix
+	}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
 	defer func() {
 		if err := pubsub.Close(); err != nil {
@@ -254,7 +283,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 		}
 	}()
 
-	logger.Info(ctx, "Listening for Redis keyspace notifications")
+	logger.Info(ctx, "Listening for Redis keyspace notifications", "environment", env, "patterns", patterns)
 
 	// Process messages from the subscription channel
 	ch := pubsub.Channel()
@@ -293,9 +322,24 @@ func subscribeToRedisChanges(ctx context.Context) {
 				continue
 			}
 
-			// Only process keys with our prefix
-			if !strings.HasPrefix(key, "msg-") {
-				logger.Debug(ctx, "Ignoring key without msg: prefix", "key", key)
+			// Check if key has our environment prefix for keyevent notifications
+			if strings.Contains(msg.Channel, "__keyevent@0__:") {
+				// For keyevent notifications, make sure the key has our environment prefix
+				expectedPrefix := fmt.Sprintf("%s:msg-", env)
+				if !strings.HasPrefix(key, expectedPrefix) {
+					logger.Debug(ctx, "Ignoring key from different environment",
+						"key", key,
+						"expected_prefix", expectedPrefix,
+						"environment", env)
+					continue
+				}
+			}
+
+			// For keyspace events, we already filtered by pattern with the environment prefix
+
+			// Only process keys with our message prefix pattern
+			if !strings.Contains(key, ":msg-") {
+				logger.Debug(ctx, "Ignoring key without msg- pattern", "key", key)
 				continue
 			}
 
@@ -303,8 +347,9 @@ func subscribeToRedisChanges(ctx context.Context) {
 			processCtx, span := tracer.Start(ctx, "redis.keyspace_event",
 				trace.WithAttributes(attribute.String("redis.key", key)))
 
-			// Get the value from Redis
-			val, err := redisConn.GetWithTracing(processCtx, key)
+			// Get the value from Redis - we don't need to prefix the key here
+			// since we already have the full prefixed key from the notification
+			val, err := redisConn.Client().Get(processCtx, key).Result()
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "Failed to get value for key")
