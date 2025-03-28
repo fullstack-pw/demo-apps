@@ -476,7 +476,6 @@ def main():
     args = parser.parse_args()
     
     result = convert_image_to_ascii(args.image_path, args.columns, args.back)
-    print(result)
 
 if __name__ == "__main__":
     main()
