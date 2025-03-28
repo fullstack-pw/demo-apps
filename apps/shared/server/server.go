@@ -58,30 +58,34 @@ func WithTimeout(read, write, idle time.Duration) ServerOption {
 	}
 }
 
+// PathConditionalTracing wraps a handler and applies tracing except for specified paths
+func PathConditionalTracing(handler http.Handler, name string, excludePaths []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if path should be excluded from tracing
+		for _, path := range excludePaths {
+			if r.URL.Path == path {
+				// Pass through without tracing
+				handler.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Apply tracing for non-excluded paths
+		otelHandler := otelhttp.NewHandler(handler, name)
+		otelHandler.ServeHTTP(w, r)
+	})
+}
+
 func NewServer(name string, options ...ServerOption) *Server {
 	mux := http.NewServeMux()
 
-	// Create a custom handler that excludes health check endpoints from tracing
-	tracingExcludeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Check if this is a health check endpoint
-		path := r.URL.Path
-		if path == "/health" || path == "/livez" || path == "/readyz" {
-			// Pass through without tracing for health checks
-			mux.ServeHTTP(w, r)
-			return
-		}
-
-		// Apply tracing for non-health check endpoints
-		otelHandler := otelhttp.NewHandler(mux, name)
-		otelHandler.ServeHTTP(w, r)
-	})
-
+	// Create server with initial configuration
 	server := &Server{
 		name: name,
 		addr: ":8080", // Default port
 		mux:  mux,
 		server: &http.Server{
-			Handler:      tracingExcludeHandler,
+			// We'll set the handler after applying options
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  30 * time.Second,
@@ -92,12 +96,18 @@ func NewServer(name string, options ...ServerOption) *Server {
 		},
 	}
 
+	// Apply custom options
 	for _, option := range options {
 		option(server)
 	}
 
 	// Update server address
 	server.server.Addr = server.addr
+
+	// Setup handler with conditional tracing
+	excludePaths := []string{"/health", "/livez", "/readyz"}
+	tracingHandler := PathConditionalTracing(mux, name, excludePaths)
+	server.server.Handler = tracingHandler
 
 	return server
 }
