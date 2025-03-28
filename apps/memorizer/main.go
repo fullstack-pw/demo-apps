@@ -499,9 +499,24 @@ if __name__ == "__main__":
 	}
 
 	// Check if ascii_magic is installed, and install it if not
-	cmd := exec.Command("pip3", "install", "ascii_magic")
+	// Use the virtual environment Python if available
+	pythonPath := "/opt/venv/bin/python3"
+	pipPath := "/opt/venv/bin/pip"
+
+	if _, err := os.Stat(pipPath); os.IsNotExist(err) {
+		// Fall back to system Python if virtual environment Python doesn't exist
+		pythonPath = "python3"
+		pipPath = "pip3"
+	}
+
+	// Try to import ascii_magic to check if it's installed
+	cmd := exec.Command(pythonPath, "-c", "import ascii_magic")
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to install ascii_magic: %w", err)
+		// Install ascii_magic if not already installed
+		installCmd := exec.Command(pipPath, "install", "ascii_magic", "pillow")
+		if err := installCmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to install ascii_magic: %w", err)
+		}
 	}
 
 	return scriptPath, nil
