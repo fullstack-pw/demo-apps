@@ -38,7 +38,7 @@ var (
 )
 
 // writeToPostgres writes message data to PostgreSQL with tracing
-func writeToPostgres(ctx context.Context, id string, content string, headers map[string]string) error {
+func writeToPostgres(ctx context.Context, id string, content string, headers map[string]string, asciiTerminal, asciiFile, asciiHTML string) error {
 	// Create a child span for the database operation
 	ctx, span := tracer.Start(ctx, "pg.write_message", trace.WithAttributes(
 		attribute.String("db.system", "postgresql"),
@@ -52,6 +52,9 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 	span.SetAttributes(
 		attribute.String("message.content", content),
 		attribute.Int("headers.count", len(headers)),
+		attribute.Bool("has_ascii_terminal", asciiTerminal != ""),
+		attribute.Bool("has_ascii_file", asciiFile != ""),
+		attribute.Bool("has_ascii_html", asciiHTML != ""),
 	)
 	traceID := tracing.GetTraceID(ctx)
 	span.SetAttributes(attribute.String("trace.id", traceID))
@@ -79,12 +82,15 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 
 	// Prepare the SQL query
 	query := `
-        INSERT INTO messages (id, content, source, headers, trace_id)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO messages (id, content, source, headers, trace_id, ascii_terminal, ascii_file, ascii_html)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE
         SET content = EXCLUDED.content,
             headers = EXCLUDED.headers,
             trace_id = EXCLUDED.trace_id,
+            ascii_terminal = EXCLUDED.ascii_terminal,
+            ascii_file = EXCLUDED.ascii_file,
+            ascii_html = EXCLUDED.ascii_html,
             created_at = NOW()
     `
 	logger.Debug(ctx, "Executing query",
@@ -94,6 +100,9 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		"source", "redis",
 		"headers", headersJSON,
 		"trace_id", traceID,
+		"has_ascii_terminal", asciiTerminal != "",
+		"has_ascii_file", asciiFile != "",
+		"has_ascii_html", asciiHTML != "",
 	)
 
 	if headers != nil {
@@ -105,7 +114,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		}
 	}
 	// Execute the query
-	_, err := postgresConn.ExecuteWithTracing(ctx, query, id, content, "redis", headersJSON, traceID)
+	_, err := postgresConn.ExecuteWithTracing(ctx, query, id, content, "redis", headersJSON, traceID, asciiTerminal, asciiFile, asciiHTML)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to insert message")
@@ -120,7 +129,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 
 // processRedisMessage processes a message from Redis with tracing
 func processRedisMessage(ctx context.Context, key string, value string) error {
-	// Create a span for processing the Redis message
+	// Extract trace context from message if available
 	var parentCtx = ctx
 	var message RedisMessage
 	logger.Info(ctx, "Starting to process Redis message", "key", key)
@@ -160,6 +169,37 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 			id = strings.TrimPrefix(key, "msg:")
 		}
 	}
+
+	// Check for ASCII art in Redis based on message ID
+	var asciiTerminal, asciiFile, asciiHTML string
+
+	// Only try to retrieve ASCII art if we have a valid message ID
+	if id != "" {
+		// Check for terminal ASCII art
+		terminalKey := id + ":ascii:terminal"
+		val, err := redisConn.GetWithTracing(ctx, terminalKey)
+		if err == nil {
+			logger.Info(ctx, "Found terminal ASCII art", "id", id, "key", terminalKey)
+			asciiTerminal = val
+		}
+
+		// Check for file ASCII art
+		fileKey := id + ":ascii:file"
+		val, err = redisConn.GetWithTracing(ctx, fileKey)
+		if err == nil {
+			logger.Info(ctx, "Found file ASCII art", "id", id, "key", fileKey)
+			asciiFile = val
+		}
+
+		// Check for HTML ASCII art
+		htmlKey := id + ":ascii:html"
+		val, err = redisConn.GetWithTracing(ctx, htmlKey)
+		if err == nil {
+			logger.Info(ctx, "Found HTML ASCII art", "id", id, "key", htmlKey)
+			asciiHTML = val
+		}
+	}
+
 	if message.Headers != nil {
 		if imageURL, ok := message.Headers["image_url"]; ok {
 			logger.Info(ctx, "Processing message with image URL",
@@ -169,9 +209,10 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 			span.SetAttributes(attribute.String("message.image_url", imageURL))
 		}
 	}
-	// Write to PostgreSQL
+
+	// Write to PostgreSQL with ASCII art if available
 	logger.Debug(ctx, "Writing to PostgreSQL", "id", id, "content", content)
-	err = writeToPostgres(ctx, id, content, headers)
+	err = writeToPostgres(ctx, id, content, headers, asciiTerminal, asciiFile, asciiHTML)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to write to PostgreSQL")
@@ -310,21 +351,29 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 	defer span.End()
 
 	// Prepare query
-	query := `SELECT id, content, headers, created_at, trace_id FROM messages WHERE id = $1`
+	query := `SELECT id, content, headers, created_at, trace_id, 
+              ascii_terminal IS NOT NULL as has_ascii_terminal,
+              ascii_file IS NOT NULL as has_ascii_file,
+              ascii_html IS NOT NULL as has_ascii_html 
+              FROM messages WHERE id = $1`
 
 	// Execute query
 	row := postgresConn.QueryRowWithTracing(ctx, query, id)
 
 	// Parse result
 	var (
-		messageID   string
-		content     string
-		headersJSON string
-		createdAt   time.Time
-		traceID     string
+		messageID        string
+		content          string
+		headersJSON      string
+		createdAt        time.Time
+		traceID          string
+		hasAsciiTerminal bool
+		hasAsciiFile     bool
+		hasAsciiHtml     bool
 	)
 
-	if err := row.Scan(&messageID, &content, &headersJSON, &createdAt, &traceID); err != nil {
+	if err := row.Scan(&messageID, &content, &headersJSON, &createdAt, &traceID,
+		&hasAsciiTerminal, &hasAsciiFile, &hasAsciiHtml); err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Message not found or query error")
 		logger.Error(ctx, "Database query error", "error", err, "id", id)
@@ -347,6 +396,23 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		"headers":   headers,
 		"timestamp": createdAt.Format(time.RFC3339),
 		"trace_id":  traceID,
+	}
+
+	// Add ASCII art information
+	asciiLinks := make(map[string]string)
+	if hasAsciiTerminal {
+		asciiLinks["terminal"] = fmt.Sprintf("/ascii/terminal?id=%s", id)
+	}
+	if hasAsciiFile {
+		asciiLinks["file"] = fmt.Sprintf("/ascii/file?id=%s", id)
+	}
+	if hasAsciiHtml {
+		asciiLinks["html"] = fmt.Sprintf("/ascii/html?id=%s", id)
+	}
+
+	// Only add the ascii_art field if at least one format is available
+	if len(asciiLinks) > 0 {
+		response["ascii_art"] = asciiLinks
 	}
 
 	// Return JSON response
@@ -458,14 +524,136 @@ func handleTraces(w http.ResponseWriter, r *http.Request) {
 func initializeDatabase(ctx context.Context) error {
 	// Create messages table if it doesn't exist
 	tableSchema := `
-		id VARCHAR(255) PRIMARY KEY,
-		content TEXT NOT NULL,
-		source VARCHAR(255),
-		headers JSONB,
-		trace_id VARCHAR(255),
-		created_at TIMESTAMPTZ DEFAULT NOW()
-	`
+        id VARCHAR(255) PRIMARY KEY,
+        content TEXT NOT NULL,
+        source VARCHAR(255),
+        headers JSONB,
+        trace_id VARCHAR(255),
+        ascii_terminal TEXT,
+        ascii_file TEXT,
+        ascii_html TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+    `
 	return postgresConn.EnsureTable(ctx, "messages", tableSchema)
+}
+
+// handleAsciiTerminal handles requests for terminal ASCII art format
+func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger.Debug(ctx, "Handling ASCII terminal request", "method", r.Method, "path", r.URL.Path)
+
+	// Get ID from query parameters
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		logger.Warn(ctx, "Missing ID parameter in ASCII terminal request")
+		http.Error(w, "Missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Create query context with tracing
+	ctx, span := tracer.Start(ctx, "db.ascii_terminal_query", trace.WithAttributes(
+		attribute.String("message.id", id),
+	))
+	defer span.End()
+
+	// Query the ASCII terminal content
+	query := `SELECT ascii_terminal FROM messages WHERE id = $1 AND ascii_terminal IS NOT NULL`
+	var asciiTerminal string
+
+	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiTerminal)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "ASCII terminal art not found")
+		logger.Error(ctx, "Error retrieving ASCII terminal art", "error", err, "id", id)
+		http.Error(w, "ASCII terminal art not found", http.StatusNotFound)
+		return
+	}
+
+	// Set content type to text/plain
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(asciiTerminal))
+
+	logger.Info(ctx, "ASCII terminal art retrieved successfully", "id", id)
+}
+
+// handleAsciiFile handles requests for file (plain text) ASCII art format
+func handleAsciiFile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger.Debug(ctx, "Handling ASCII file request", "method", r.Method, "path", r.URL.Path)
+
+	// Get ID from query parameters
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		logger.Warn(ctx, "Missing ID parameter in ASCII file request")
+		http.Error(w, "Missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Create query context with tracing
+	ctx, span := tracer.Start(ctx, "db.ascii_file_query", trace.WithAttributes(
+		attribute.String("message.id", id),
+	))
+	defer span.End()
+
+	// Query the ASCII file content
+	query := `SELECT ascii_file FROM messages WHERE id = $1 AND ascii_file IS NOT NULL`
+	var asciiFile string
+
+	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiFile)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "ASCII file art not found")
+		logger.Error(ctx, "Error retrieving ASCII file art", "error", err, "id", id)
+		http.Error(w, "ASCII file art not found", http.StatusNotFound)
+		return
+	}
+
+	// Set content type to text/plain
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	// Set Content-Disposition header to suggest downloading as a file
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"ascii-%s.txt\"", id))
+	w.Write([]byte(asciiFile))
+
+	logger.Info(ctx, "ASCII file art retrieved successfully", "id", id)
+}
+
+// handleAsciiHtml handles requests for HTML ASCII art format
+func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	logger.Debug(ctx, "Handling ASCII HTML request", "method", r.Method, "path", r.URL.Path)
+
+	// Get ID from query parameters
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		logger.Warn(ctx, "Missing ID parameter in ASCII HTML request")
+		http.Error(w, "Missing id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Create query context with tracing
+	ctx, span := tracer.Start(ctx, "db.ascii_html_query", trace.WithAttributes(
+		attribute.String("message.id", id),
+	))
+	defer span.End()
+
+	// Query the ASCII HTML content
+	query := `SELECT ascii_html FROM messages WHERE id = $1 AND ascii_html IS NOT NULL`
+	var asciiHtml string
+
+	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiHtml)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "ASCII HTML art not found")
+		logger.Error(ctx, "Error retrieving ASCII HTML art", "error", err, "id", id)
+		http.Error(w, "ASCII HTML art not found", http.StatusNotFound)
+		return
+	}
+
+	// Set content type to HTML
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(asciiHtml))
+
+	logger.Info(ctx, "ASCII HTML art retrieved successfully", "id", id)
 }
 
 func main() {
@@ -475,7 +663,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("writer",
-		logging.WithMinLevel(logging.Debug),
+		logging.WithMinLevel(logging.Info),
 		logging.WithJSONFormat(true),
 	)
 
@@ -530,7 +718,10 @@ func main() {
 	srv.HandleFunc("/query", handleQuery)
 	srv.HandleFunc("/cleanup", handleCleanup)
 	srv.HandleFunc("/traces", handleTraces)
-
+	// Add new ASCII art endpoints
+	srv.HandleFunc("/ascii/terminal", handleAsciiTerminal)
+	srv.HandleFunc("/ascii/file", handleAsciiFile)
+	srv.HandleFunc("/ascii/html", handleAsciiHtml)
 	// Register health checks
 	srv.RegisterHealthChecks(
 		[]health.Checker{redisConn, postgresConn}, // Liveness checks
