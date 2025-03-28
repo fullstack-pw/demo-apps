@@ -47,8 +47,17 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 	ctx, span := tracer.Start(ctx, "nats.publish")
 	defer span.End()
 
+	// Add environment prefix to queue name
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
+	// Apply environment prefix to queue name
+	prefixedQueueName := fmt.Sprintf("%s.%s", env, queueName)
+
 	span.SetAttributes(
-		attribute.String("queue.name", queueName),
+		attribute.String("queue.name", prefixedQueueName),
 		attribute.String("message.id", msg.ID),
 	)
 
@@ -64,7 +73,7 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 
 	if url, ok := msg.Headers["image_url"]; ok {
 		logger.Info(ctx, "Publishing message with image URL",
-			"queue", queueName,
+			"queue", prefixedQueueName,
 			"message_id", msg.ID,
 			"image_url", url)
 		span.SetAttributes(attribute.String("message.image_url", url))
@@ -78,8 +87,8 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	// Publish message to NATS
-	err = natsConn.PublishWithTracing(ctx, queueName, data)
+	// Publish message to NATS with prefixed queue name
+	err = natsConn.PublishWithTracing(ctx, prefixedQueueName, data)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to publish message to NATS")
@@ -87,7 +96,7 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 	}
 
 	span.SetStatus(codes.Ok, "Message published successfully")
-	logger.Info(ctx, "Message published", "queue", queueName, "message_id", msg.ID)
+	logger.Info(ctx, "Message published", "queue", prefixedQueueName, "original_queue", queueName, "message_id", msg.ID)
 	return nil
 }
 
@@ -148,7 +157,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	msg.Headers["image_url"] = imageURL
 
-	// Publish to NATS
+	// Publish to NATS (will now use prefixed queue name)
 	err = publishToNATS(ctx, queueName, msg)
 	if err != nil {
 		logger.Error(ctx, "Failed to publish message", "error", err, "queue", queueName)
@@ -161,7 +170,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	response := map[string]string{
 		"status":    "queued",
-		"queue":     queueName,
+		"queue":     queueName, // Return the original queue name to the client
 		"image_url": imageURL,
 	}
 	if err := json.NewEncoder(w).Encode(response); err != nil {

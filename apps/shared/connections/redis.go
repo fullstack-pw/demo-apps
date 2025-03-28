@@ -164,8 +164,20 @@ func (r *RedisConnection) Ping(ctx context.Context) error {
 	return err
 }
 
-// GetWithTracing gets a value from Redis with tracing
+// PrefixKey prefixes a key with the current environment
+func (r *RedisConnection) PrefixKey(key string) string {
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+	return fmt.Sprintf("%s:%s", env, key)
+}
+
+// GetWithTracing gets a value from Redis with tracing and environment prefixing
 func (r *RedisConnection) GetWithTracing(ctx context.Context, key string) (string, error) {
+	// Apply environment prefix to key
+	prefixedKey := r.PrefixKey(key)
+
 	ctx, span := tracing.GetTracer("redis").Start(ctx, "redis.get")
 	defer span.End()
 
@@ -173,19 +185,16 @@ func (r *RedisConnection) GetWithTracing(ctx context.Context, key string) (strin
 		return "", fmt.Errorf("Redis client not initialized")
 	}
 
-	return r.client.Get(ctx, key).Result()
+	return r.client.Get(ctx, prefixedKey).Result()
 }
 
-// SetWithTracing sets a value in Redis with tracing
+// Similar changes for SetWithTracing
 func (r *RedisConnection) SetWithTracing(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
-	ctx, span := tracing.GetTracer("redis").Start(ctx, "redis.set")
-	defer span.End()
+	// Apply environment prefix to key
+	prefixedKey := r.PrefixKey(key)
 
-	if r.client == nil {
-		return fmt.Errorf("Redis client not initialized")
-	}
-
-	return r.client.Set(ctx, key, value, expiration).Err()
+	// ... rest of the function
+	return r.client.Set(ctx, prefixedKey, value, expiration).Err()
 }
 
 // SetupRedisNotifications ensures Redis keyspace notifications are enabled

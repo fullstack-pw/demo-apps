@@ -40,7 +40,8 @@ var (
 	redisConn          *connections.RedisConnection
 	logger             *logging.Logger
 	tracer             = tracing.GetTracer("memorizer")
-	asciiConverterPath string // Path to the ASCII converter script
+	asciiConverterPath string               // Path to the ASCII converter script
+	subscriptions      []*nats.Subscription // Store subscriptions for cleanup
 )
 
 // Update the function signature to include headers
@@ -660,15 +661,40 @@ func main() {
 		queueNames = "default"
 	}
 
-	// Subscribe to the specified queue
-	logger.Info(ctx, "Subscribing to NATS queue", "queue", queueNames)
-	sub, err := natsConn.SubscribeWithTracing(queueNames, handleMessage)
-	if err != nil {
-		logger.Fatal(ctx, "Failed to subscribe to NATS queue", "error", err, "queue", queueNames)
+	// Get environment for subject prefixing
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
 	}
+
+	// Split multiple queue names if present
+	queuesList := strings.Split(queueNames, ",")
+	for _, queue := range queuesList {
+		queue = strings.TrimSpace(queue)
+		if queue == "" {
+			continue
+		}
+
+		// Apply environment prefix to queue name
+		prefixedQueue := fmt.Sprintf("%s.%s", env, queue)
+
+		// Subscribe to the prefixed queue
+		logger.Info(ctx, "Subscribing to NATS queue", "queue", prefixedQueue, "original_queue", queue)
+		sub, err := natsConn.SubscribeWithTracing(prefixedQueue, handleMessage)
+		if err != nil {
+			logger.Fatal(ctx, "Failed to subscribe to NATS queue", "error", err, "queue", prefixedQueue)
+		}
+
+		// Store the subscription for cleanup
+		subscriptions = append(subscriptions, sub)
+	}
+
+	// Deferred cleanup for all subscriptions
 	defer func() {
-		if err := sub.Unsubscribe(); err != nil {
-			logger.Error(ctx, "Error unsubscribing from NATS", "error", err)
+		for _, sub := range subscriptions {
+			if err := sub.Unsubscribe(); err != nil {
+				logger.Error(ctx, "Error unsubscribing from NATS", "error", err)
+			}
 		}
 	}()
 

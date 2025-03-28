@@ -37,7 +37,6 @@ var (
 	tracer       = tracing.GetTracer("writer")
 )
 
-// writeToPostgres writes message data to PostgreSQL with tracing
 func writeToPostgres(ctx context.Context, id string, content string, headers map[string]string, asciiTerminal, asciiFile, asciiHTML string) error {
 	// Create a child span for the database operation
 	ctx, span := tracer.Start(ctx, "pg.write_message", trace.WithAttributes(
@@ -46,8 +45,8 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		attribute.String("message.id", id),
 	))
 	defer span.End()
-
-	logger.Debug(ctx, "Starting PostgreSQL write", "id", id)
+	tableName := getTableName()
+	logger.Debug(ctx, "Starting PostgreSQL write", "id", id, "table", tableName)
 
 	span.SetAttributes(
 		attribute.String("message.content", content),
@@ -81,8 +80,8 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 	}
 
 	// Prepare the SQL query
-	query := `
-        INSERT INTO messages (id, content, source, headers, trace_id, ascii_terminal, ascii_file, ascii_html)
+	query := fmt.Sprintf(`
+        INSERT INTO %s (id, content, source, headers, trace_id, ascii_terminal, ascii_file, ascii_html)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE
         SET content = EXCLUDED.content,
@@ -92,7 +91,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
             ascii_file = EXCLUDED.ascii_file,
             ascii_html = EXCLUDED.ascii_html,
             created_at = NOW()
-    `
+    `, tableName)
 	logger.Debug(ctx, "Executing query",
 		"query", query,
 		"id", id,
@@ -331,7 +330,6 @@ func subscribeToRedisChanges(ctx context.Context) {
 	}
 }
 
-// handleQuery handles the /query endpoint to retrieve messages from the database
 func handleQuery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling query request", "method", r.Method, "path", r.URL.Path)
@@ -343,20 +341,20 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing id parameter", http.StatusBadRequest)
 		return
 	}
-
+	tableName := getTableName()
 	// Create query context with tracing
 	ctx, span := tracer.Start(ctx, "db.query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Prepare query
-	query := `SELECT id, content, headers, created_at, trace_id, 
+	// Prepare query with environment-specific table
+	query := fmt.Sprintf(`SELECT id, content, headers, created_at, trace_id, 
               ascii_terminal IS NOT NULL as has_ascii_terminal,
               ascii_file IS NOT NULL as has_ascii_file,
               ascii_html IS NOT NULL as has_ascii_html 
-              FROM messages WHERE id = $1`
-
+              FROM %s WHERE id = $1`, tableName)
 	// Execute query
 	row := postgresConn.QueryRowWithTracing(ctx, query, id)
 
@@ -443,15 +441,16 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing id parameter", http.StatusBadRequest)
 		return
 	}
-
+	tableName := getTableName()
 	// Create query context with tracing
 	ctx, span := tracer.Start(ctx, "db.delete", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Delete from database
-	result, err := postgresConn.ExecuteWithTracing(ctx, "DELETE FROM messages WHERE id = $1", id)
+	// Delete from database with environment-specific table
+	result, err := postgresConn.ExecuteWithTracing(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", tableName), id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to delete message")
@@ -472,7 +471,6 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	logger.Info(ctx, "Message deleted successfully", "id", id)
 }
 
-// handleTraces retrieves and returns trace information for a message
 func handleTraces(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling traces request", "method", r.Method, "path", r.URL.Path)
@@ -486,13 +484,15 @@ func handleTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query trace information from the database
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.query_trace", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Simple query to get trace_id
-	query := `SELECT trace_id FROM messages WHERE id = $1`
+	// Simple query to get trace_id with environment-specific table
+	query := fmt.Sprintf(`SELECT trace_id FROM %s WHERE id = $1`, tableName)
 	row := postgresConn.QueryRowWithTracing(ctx, query, id)
 
 	var traceID string
@@ -520,8 +520,9 @@ func handleTraces(w http.ResponseWriter, r *http.Request) {
 	logger.Info(ctx, "Trace information retrieved successfully", "id", id, "trace_id", traceID)
 }
 
-// Initialize creates the necessary database tables
+// Initialize creates the necessary database tables with environment prefix
 func initializeDatabase(ctx context.Context) error {
+	tableName := getTableName()
 	// Create messages table if it doesn't exist
 	tableSchema := `
         id VARCHAR(255) PRIMARY KEY,
@@ -534,10 +535,9 @@ func initializeDatabase(ctx context.Context) error {
         ascii_html TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
     `
-	return postgresConn.EnsureTable(ctx, "messages", tableSchema)
+	return postgresConn.EnsureTable(ctx, tableName, tableSchema)
 }
 
-// handleAsciiTerminal handles requests for terminal ASCII art format
 func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling ASCII terminal request", "method", r.Method, "path", r.URL.Path)
@@ -551,13 +551,15 @@ func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_terminal_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Query the ASCII terminal content
-	query := `SELECT ascii_terminal FROM messages WHERE id = $1 AND ascii_terminal IS NOT NULL`
+	// Query the ASCII terminal content with environment-specific table
+	query := fmt.Sprintf(`SELECT ascii_terminal FROM %s WHERE id = $1 AND ascii_terminal IS NOT NULL`, tableName)
 	var asciiTerminal string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiTerminal)
@@ -590,13 +592,15 @@ func handleAsciiFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_file_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
 	// Query the ASCII file content
-	query := `SELECT ascii_file FROM messages WHERE id = $1 AND ascii_file IS NOT NULL`
+	query := fmt.Sprintf(`SELECT ascii_file FROM %s WHERE id = $1 AND ascii_file IS NOT NULL`, tableName)
 	var asciiFile string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiFile)
@@ -631,13 +635,15 @@ func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_html_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
 	// Query the ASCII HTML content
-	query := `SELECT ascii_html FROM messages WHERE id = $1 AND ascii_html IS NOT NULL`
+	query := fmt.Sprintf(`SELECT ascii_html FROM %s WHERE id = $1 AND ascii_html IS NOT NULL`, tableName)
 	var asciiHtml string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiHtml)
@@ -654,6 +660,15 @@ func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(asciiHtml))
 
 	logger.Info(ctx, "ASCII HTML art retrieved successfully", "id", id)
+}
+
+// getTableName returns the environment-specific table name
+func getTableName() string {
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+	return fmt.Sprintf("%s_messages", env)
 }
 
 func main() {
