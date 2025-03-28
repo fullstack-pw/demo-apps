@@ -663,7 +663,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("writer",
-		logging.WithMinLevel(logging.Error),
+		logging.WithMinLevel(logging.Info),
 		logging.WithJSONFormat(true),
 	)
 
