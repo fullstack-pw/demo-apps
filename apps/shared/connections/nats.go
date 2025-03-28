@@ -145,3 +145,33 @@ func (n *NATSConnection) SubscribeWithTracing(subject string, handler nats.MsgHa
 
 	return n.conn.Subscribe(subject, tracingHandler)
 }
+
+// PublishWithEnvTracing publishes a message with environment prefix and tracing
+func (n *NATSConnection) PublishWithEnvTracing(ctx context.Context, subject string, data []byte) error {
+	// Get environment
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
+	// Create prefixed subject
+	prefixedSubject := fmt.Sprintf("%s.%s", env, subject)
+
+	// Delegate to regular tracing publish
+	return n.PublishWithTracing(ctx, prefixedSubject, data)
+}
+
+// SubscribeWithEnvTracing creates a subscription with environment prefix and tracing
+func (n *NATSConnection) SubscribeWithEnvTracing(subject string, handler nats.MsgHandler) (*nats.Subscription, error) {
+	// Get environment
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
+	// Create prefixed subject
+	prefixedSubject := fmt.Sprintf("%s.%s", env, subject)
+
+	// Delegate to regular tracing subscribe
+	return n.SubscribeWithTracing(prefixedSubject, handler)
+}

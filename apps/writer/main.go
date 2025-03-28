@@ -37,7 +37,6 @@ var (
 	tracer       = tracing.GetTracer("writer")
 )
 
-// writeToPostgres writes message data to PostgreSQL with tracing
 func writeToPostgres(ctx context.Context, id string, content string, headers map[string]string, asciiTerminal, asciiFile, asciiHTML string) error {
 	// Create a child span for the database operation
 	ctx, span := tracer.Start(ctx, "pg.write_message", trace.WithAttributes(
@@ -46,8 +45,8 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 		attribute.String("message.id", id),
 	))
 	defer span.End()
-
-	logger.Debug(ctx, "Starting PostgreSQL write", "id", id)
+	tableName := getTableName()
+	logger.Debug(ctx, "Starting PostgreSQL write", "id", id, "table", tableName)
 
 	span.SetAttributes(
 		attribute.String("message.content", content),
@@ -81,8 +80,8 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
 	}
 
 	// Prepare the SQL query
-	query := `
-        INSERT INTO messages (id, content, source, headers, trace_id, ascii_terminal, ascii_file, ascii_html)
+	query := fmt.Sprintf(`
+        INSERT INTO %s (id, content, source, headers, trace_id, ascii_terminal, ascii_file, ascii_html)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         ON CONFLICT (id) DO UPDATE
         SET content = EXCLUDED.content,
@@ -92,7 +91,7 @@ func writeToPostgres(ctx context.Context, id string, content string, headers map
             ascii_file = EXCLUDED.ascii_file,
             ascii_html = EXCLUDED.ascii_html,
             created_at = NOW()
-    `
+    `, tableName)
 	logger.Debug(ctx, "Executing query",
 		"query", query,
 		"id", id,
@@ -157,7 +156,15 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		logger.Warn(ctx, "Message is not valid JSON, using raw value", "error", err)
 		span.SetAttributes(attribute.Bool("message.is_json", false))
 		content = value
-		id = strings.TrimPrefix(key, "msg:")
+
+		// Extract ID from the key - must handle environment prefix
+		// Format is env:msg-123, so we need to get the part after the last colon
+		parts := strings.Split(key, ":")
+		if len(parts) >= 2 {
+			id = strings.Join(parts[1:], ":")
+		} else {
+			id = key
+		}
 	} else {
 		// Valid JSON message
 		logger.Debug(ctx, "Successfully parsed JSON message", "message", message)
@@ -166,34 +173,44 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 		headers = message.Headers
 		id = message.ID
 		if id == "" {
-			id = strings.TrimPrefix(key, "msg:")
+			// Extract ID from the key - must handle environment prefix
+			parts := strings.Split(key, ":")
+			if len(parts) >= 2 {
+				id = strings.Join(parts[1:], ":")
+			} else {
+				id = key
+			}
 		}
 	}
 
 	// Check for ASCII art in Redis based on message ID
 	var asciiTerminal, asciiFile, asciiHTML string
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
 
 	// Only try to retrieve ASCII art if we have a valid message ID
 	if id != "" {
 		// Check for terminal ASCII art
-		terminalKey := id + ":ascii:terminal"
-		val, err := redisConn.GetWithTracing(ctx, terminalKey)
+		terminalKey := fmt.Sprintf("%s:%s:ascii:terminal", env, id)
+		val, err := redisConn.Client().Get(ctx, terminalKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found terminal ASCII art", "id", id, "key", terminalKey)
 			asciiTerminal = val
 		}
 
 		// Check for file ASCII art
-		fileKey := id + ":ascii:file"
-		val, err = redisConn.GetWithTracing(ctx, fileKey)
+		fileKey := fmt.Sprintf("%s:%s:ascii:file", env, id)
+		val, err = redisConn.Client().Get(ctx, fileKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found file ASCII art", "id", id, "key", fileKey)
 			asciiFile = val
 		}
 
 		// Check for HTML ASCII art
-		htmlKey := id + ":ascii:html"
-		val, err = redisConn.GetWithTracing(ctx, htmlKey)
+		htmlKey := fmt.Sprintf("%s:%s:ascii:html", env, id)
+		val, err = redisConn.Client().Get(ctx, htmlKey).Result()
 		if err == nil {
 			logger.Info(ctx, "Found HTML ASCII art", "id", id, "key", htmlKey)
 			asciiHTML = val
@@ -238,6 +255,12 @@ func processRedisMessage(ctx context.Context, key string, value string) error {
 func subscribeToRedisChanges(ctx context.Context) {
 	logger.Info(ctx, "Setting up Redis keyspace notifications")
 
+	// Get environment for key prefixing
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
 	// Set up keyspace notifications if possible
 	err := redisConn.SetupRedisNotifications(ctx)
 	if err != nil {
@@ -246,8 +269,13 @@ func subscribeToRedisChanges(ctx context.Context) {
 		return
 	}
 
-	// Subscribe to keyspace notifications
-	patterns := []string{"__keyevent@0__:set", "__keyevent@0__:hset", "__keyspace@0__:msg-*"}
+	// Subscribe to keyspace notifications with environment-specific patterns
+	// We need to watch for keys with the environment prefix
+	patterns := []string{
+		"__keyevent@0__:set",
+		"__keyevent@0__:hset",
+		fmt.Sprintf("__keyspace@0__:%s:msg-*", env), // Environment-specific prefix
+	}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
 	defer func() {
 		if err := pubsub.Close(); err != nil {
@@ -255,7 +283,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 		}
 	}()
 
-	logger.Info(ctx, "Listening for Redis keyspace notifications")
+	logger.Info(ctx, "Listening for Redis keyspace notifications", "environment", env, "patterns", patterns)
 
 	// Process messages from the subscription channel
 	ch := pubsub.Channel()
@@ -294,9 +322,24 @@ func subscribeToRedisChanges(ctx context.Context) {
 				continue
 			}
 
-			// Only process keys with our prefix
-			if !strings.HasPrefix(key, "msg-") {
-				logger.Debug(ctx, "Ignoring key without msg: prefix", "key", key)
+			// Check if key has our environment prefix for keyevent notifications
+			if strings.Contains(msg.Channel, "__keyevent@0__:") {
+				// For keyevent notifications, make sure the key has our environment prefix
+				expectedPrefix := fmt.Sprintf("%s:msg-", env)
+				if !strings.HasPrefix(key, expectedPrefix) {
+					logger.Debug(ctx, "Ignoring key from different environment",
+						"key", key,
+						"expected_prefix", expectedPrefix,
+						"environment", env)
+					continue
+				}
+			}
+
+			// For keyspace events, we already filtered by pattern with the environment prefix
+
+			// Only process keys with our message prefix pattern
+			if !strings.Contains(key, ":msg-") {
+				logger.Debug(ctx, "Ignoring key without msg- pattern", "key", key)
 				continue
 			}
 
@@ -304,8 +347,9 @@ func subscribeToRedisChanges(ctx context.Context) {
 			processCtx, span := tracer.Start(ctx, "redis.keyspace_event",
 				trace.WithAttributes(attribute.String("redis.key", key)))
 
-			// Get the value from Redis
-			val, err := redisConn.GetWithTracing(processCtx, key)
+			// Get the value from Redis - we don't need to prefix the key here
+			// since we already have the full prefixed key from the notification
+			val, err := redisConn.Client().Get(processCtx, key).Result()
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "Failed to get value for key")
@@ -331,7 +375,6 @@ func subscribeToRedisChanges(ctx context.Context) {
 	}
 }
 
-// handleQuery handles the /query endpoint to retrieve messages from the database
 func handleQuery(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling query request", "method", r.Method, "path", r.URL.Path)
@@ -343,20 +386,20 @@ func handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing id parameter", http.StatusBadRequest)
 		return
 	}
-
+	tableName := getTableName()
 	// Create query context with tracing
 	ctx, span := tracer.Start(ctx, "db.query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Prepare query
-	query := `SELECT id, content, headers, created_at, trace_id, 
+	// Prepare query with environment-specific table
+	query := fmt.Sprintf(`SELECT id, content, headers, created_at, trace_id, 
               ascii_terminal IS NOT NULL as has_ascii_terminal,
               ascii_file IS NOT NULL as has_ascii_file,
               ascii_html IS NOT NULL as has_ascii_html 
-              FROM messages WHERE id = $1`
-
+              FROM %s WHERE id = $1`, tableName)
 	// Execute query
 	row := postgresConn.QueryRowWithTracing(ctx, query, id)
 
@@ -443,15 +486,16 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing id parameter", http.StatusBadRequest)
 		return
 	}
-
+	tableName := getTableName()
 	// Create query context with tracing
 	ctx, span := tracer.Start(ctx, "db.delete", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Delete from database
-	result, err := postgresConn.ExecuteWithTracing(ctx, "DELETE FROM messages WHERE id = $1", id)
+	// Delete from database with environment-specific table
+	result, err := postgresConn.ExecuteWithTracing(ctx, fmt.Sprintf("DELETE FROM %s WHERE id = $1", tableName), id)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Failed to delete message")
@@ -472,7 +516,6 @@ func handleCleanup(w http.ResponseWriter, r *http.Request) {
 	logger.Info(ctx, "Message deleted successfully", "id", id)
 }
 
-// handleTraces retrieves and returns trace information for a message
 func handleTraces(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling traces request", "method", r.Method, "path", r.URL.Path)
@@ -486,13 +529,15 @@ func handleTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Query trace information from the database
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.query_trace", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Simple query to get trace_id
-	query := `SELECT trace_id FROM messages WHERE id = $1`
+	// Simple query to get trace_id with environment-specific table
+	query := fmt.Sprintf(`SELECT trace_id FROM %s WHERE id = $1`, tableName)
 	row := postgresConn.QueryRowWithTracing(ctx, query, id)
 
 	var traceID string
@@ -520,8 +565,9 @@ func handleTraces(w http.ResponseWriter, r *http.Request) {
 	logger.Info(ctx, "Trace information retrieved successfully", "id", id, "trace_id", traceID)
 }
 
-// Initialize creates the necessary database tables
+// Initialize creates the necessary database tables with environment prefix
 func initializeDatabase(ctx context.Context) error {
+	tableName := getTableName()
 	// Create messages table if it doesn't exist
 	tableSchema := `
         id VARCHAR(255) PRIMARY KEY,
@@ -534,10 +580,9 @@ func initializeDatabase(ctx context.Context) error {
         ascii_html TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
     `
-	return postgresConn.EnsureTable(ctx, "messages", tableSchema)
+	return postgresConn.EnsureTable(ctx, tableName, tableSchema)
 }
 
-// handleAsciiTerminal handles requests for terminal ASCII art format
 func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	logger.Debug(ctx, "Handling ASCII terminal request", "method", r.Method, "path", r.URL.Path)
@@ -551,13 +596,15 @@ func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_terminal_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
-	// Query the ASCII terminal content
-	query := `SELECT ascii_terminal FROM messages WHERE id = $1 AND ascii_terminal IS NOT NULL`
+	// Query the ASCII terminal content with environment-specific table
+	query := fmt.Sprintf(`SELECT ascii_terminal FROM %s WHERE id = $1 AND ascii_terminal IS NOT NULL`, tableName)
 	var asciiTerminal string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiTerminal)
@@ -590,13 +637,15 @@ func handleAsciiFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_file_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
 	// Query the ASCII file content
-	query := `SELECT ascii_file FROM messages WHERE id = $1 AND ascii_file IS NOT NULL`
+	query := fmt.Sprintf(`SELECT ascii_file FROM %s WHERE id = $1 AND ascii_file IS NOT NULL`, tableName)
 	var asciiFile string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiFile)
@@ -631,13 +680,15 @@ func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create query context with tracing
+	tableName := getTableName()
 	ctx, span := tracer.Start(ctx, "db.ascii_html_query", trace.WithAttributes(
 		attribute.String("message.id", id),
+		attribute.String("db.table", tableName),
 	))
 	defer span.End()
 
 	// Query the ASCII HTML content
-	query := `SELECT ascii_html FROM messages WHERE id = $1 AND ascii_html IS NOT NULL`
+	query := fmt.Sprintf(`SELECT ascii_html FROM %s WHERE id = $1 AND ascii_html IS NOT NULL`, tableName)
 	var asciiHtml string
 
 	err := postgresConn.QueryRowWithTracing(ctx, query, id).Scan(&asciiHtml)
@@ -654,6 +705,15 @@ func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(asciiHtml))
 
 	logger.Info(ctx, "ASCII HTML art retrieved successfully", "id", id)
+}
+
+// getTableName returns the environment-specific table name
+func getTableName() string {
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+	return fmt.Sprintf("%s_messages", env)
 }
 
 func main() {
