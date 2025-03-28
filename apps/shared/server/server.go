@@ -58,16 +58,30 @@ func WithTimeout(read, write, idle time.Duration) ServerOption {
 	}
 }
 
-// NewServer creates a new HTTP server
 func NewServer(name string, options ...ServerOption) *Server {
 	mux := http.NewServeMux()
+
+	// Create a custom handler that excludes health check endpoints from tracing
+	tracingExcludeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if this is a health check endpoint
+		path := r.URL.Path
+		if path == "/health" || path == "/livez" || path == "/readyz" {
+			// Pass through without tracing for health checks
+			mux.ServeHTTP(w, r)
+			return
+		}
+
+		// Apply tracing for non-health check endpoints
+		otelHandler := otelhttp.NewHandler(mux, name)
+		otelHandler.ServeHTTP(w, r)
+	})
 
 	server := &Server{
 		name: name,
 		addr: ":8080", // Default port
 		mux:  mux,
 		server: &http.Server{
-			Handler:      otelhttp.NewHandler(mux, name),
+			Handler:      tracingExcludeHandler,
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  30 * time.Second,
