@@ -188,21 +188,27 @@ func LoggingMiddleware(logger *logging.Logger) Middleware {
 			// Process the request
 			next.ServeHTTP(wrapper, r)
 
-			// Log the request
-			duration := time.Since(start)
-			logger.Info(r.Context(),
-				fmt.Sprintf("%s %s %d %s",
-					r.Method,
-					r.URL.Path,
-					wrapper.statusCode,
-					duration,
-				),
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", wrapper.statusCode,
-				"duration_ms", duration.Milliseconds(),
-				"user_agent", r.UserAgent(),
-			)
+			// Check if this is a health check endpoint
+			isHealthEndpoint := r.URL.Path == "/health" || r.URL.Path == "/livez" || r.URL.Path == "/readyz"
+
+			// Only log health check endpoints if in Debug mode
+			if !isHealthEndpoint || logger.IsLevelEnabled(logging.Debug) {
+				// Log the request
+				duration := time.Since(start)
+				logger.Info(r.Context(),
+					fmt.Sprintf("%s %s %d %s",
+						r.Method,
+						r.URL.Path,
+						wrapper.statusCode,
+						duration,
+					),
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", wrapper.statusCode,
+					"duration_ms", duration.Milliseconds(),
+					"user_agent", r.UserAgent(),
+				)
+			}
 		})
 	}
 }
