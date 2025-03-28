@@ -102,18 +102,30 @@ func (s *Server) HandleFunc(pattern string, handlerFunc http.HandlerFunc) {
 	s.mux.Handle(pattern, wrappedHandler)
 }
 
-func (s *Server) RegisterHealthChecks(livenessCheckers, readinessCheckers []health.Checker) {
-	// Determine if verbose health check logging should be enabled based on logger level
-	isDebugMode := false
-	if s.logger != nil {
-		isDebugMode = s.logger.IsLevelEnabled(logging.Debug)
+// ConditionalTracingHandler wraps a handler with tracing only if the condition is met
+func ConditionalTracingHandler(h http.Handler, operationName string, condition bool) http.Handler {
+	if condition {
+		return otelhttp.NewHandler(h, operationName)
 	}
+	return h
+}
+
+func (s *Server) RegisterHealthChecks(livenessCheckers, readinessCheckers []health.Checker) {
+	isDebugMode := s.logger != nil && s.logger.IsLevelEnabled(logging.Debug)
 
 	healthConfig := health.HealthCheckConfig{
 		VerboseLogging: isDebugMode,
 	}
 
-	health.RegisterHealthEndpoints(s.mux, healthConfig, livenessCheckers, readinessCheckers)
+	// Create handlers
+	healthHandler := health.CreateHealthHandler(healthConfig, append(livenessCheckers, readinessCheckers...)...)
+	livenessHandler := health.CreateLivenessHandler(healthConfig)
+	readinessHandler := health.CreateReadinessHandler(healthConfig, readinessCheckers...)
+
+	// Register with conditional tracing
+	s.mux.Handle("/health", ConditionalTracingHandler(healthHandler, "health-check", isDebugMode))
+	s.mux.Handle("/livez", ConditionalTracingHandler(livenessHandler, "liveness-check", isDebugMode))
+	s.mux.Handle("/readyz", ConditionalTracingHandler(readinessHandler, "readiness-check", isDebugMode))
 }
 
 // Start starts the server
