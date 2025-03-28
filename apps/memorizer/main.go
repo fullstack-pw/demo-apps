@@ -1,12 +1,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,10 +36,11 @@ type Message struct {
 
 var (
 	// Global variables
-	natsConn  *connections.NATSConnection
-	redisConn *connections.RedisConnection
-	logger    *logging.Logger
-	tracer    = tracing.GetTracer("memorizer")
+	natsConn           *connections.NATSConnection
+	redisConn          *connections.RedisConnection
+	logger             *logging.Logger
+	tracer             = tracing.GetTracer("memorizer")
+	asciiConverterPath string // Path to the ASCII converter script
 )
 
 // Update the function signature to include headers
@@ -114,6 +120,83 @@ func storeInRedis(ctx context.Context, id string, content string, headers map[st
 	return nil
 }
 
+// downloadImage downloads an image from a URL and saves it to a temporary file
+func downloadImage(ctx context.Context, imageURL string) (string, error) {
+	ctx, span := tracer.Start(ctx, "image.download", trace.WithAttributes(
+		attribute.String("image.url", imageURL),
+	))
+	defer span.End()
+
+	logger.Info(ctx, "Downloading image", "url", imageURL)
+
+	// Create HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create HTTP request")
+		logger.Error(ctx, "Failed to create HTTP request", "error", err, "url", imageURL)
+		return "", fmt.Errorf("failed to create HTTP request: %w", err)
+	}
+
+	// Set user agent to avoid being blocked
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	// Execute request
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to download image")
+		logger.Error(ctx, "Failed to download image", "error", err, "url", imageURL)
+		return "", fmt.Errorf("failed to download image: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Check response status
+	if resp.StatusCode != http.StatusOK {
+		err := fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Invalid response status")
+		logger.Error(ctx, "Invalid response status", "status", resp.StatusCode, "url", imageURL)
+		return "", err
+	}
+
+	// Check content type
+	contentType := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		err := fmt.Errorf("unexpected content type: %s", contentType)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Invalid content type")
+		logger.Error(ctx, "Invalid content type", "content_type", contentType, "url", imageURL)
+		return "", err
+	}
+
+	// Create temporary file
+	tempFile, err := os.CreateTemp("", "image-*.jpg")
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to create temporary file")
+		logger.Error(ctx, "Failed to create temporary file", "error", err)
+		return "", fmt.Errorf("failed to create temporary file: %w", err)
+	}
+	defer tempFile.Close()
+
+	// Save image to temporary file
+	_, err = io.Copy(tempFile, resp.Body)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Failed to save image")
+		logger.Error(ctx, "Failed to save image to file", "error", err, "path", tempFile.Name())
+		return "", fmt.Errorf("failed to save image: %w", err)
+	}
+
+	logger.Info(ctx, "Image downloaded successfully", "url", imageURL, "path", tempFile.Name())
+	span.SetStatus(codes.Ok, "Image downloaded successfully")
+	return tempFile.Name(), nil
+}
+
 // handleMessage processes a message from NATS with tracing
 func handleMessage(msg *nats.Msg) {
 	// Extract trace context from message if available
@@ -143,6 +226,70 @@ func handleMessage(msg *nats.Msg) {
 			span.SetAttributes(attribute.String("message.image_url", imageURL))
 		}
 	}
+	if url, ok := message.Headers["image_url"]; ok {
+		logger.Info(ctx, "Found image URL in message", "id", message.ID, "image_url", url)
+		span.SetAttributes(attribute.String("message.image_url", url))
+
+		// Download the image
+		imagePath, err := downloadImage(ctx, url)
+		if err != nil {
+			logger.Error(ctx, "Failed to download image", "error", err, "image_url", url)
+			// Continue processing even if image download fails
+		} else {
+			logger.Info(ctx, "Image downloaded successfully", "id", message.ID, "path", imagePath)
+			// Store the image path in the message headers for later steps
+			message.Headers["image_path"] = imagePath
+			// Convert image to ASCII art if we have a script path
+			if asciiConverterPath != "" && message.Headers["image_path"] != "" {
+				logger.Info(ctx, "Converting image to ASCII art", "id", message.ID, "image_path", message.Headers["image_path"])
+
+				// Execute the ASCII converter script
+				asciiArt, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--columns", "80")
+				if err != nil {
+					logger.Error(ctx, "Failed to convert image to ASCII art",
+						"error", err,
+						"id", message.ID,
+						"image_path", message.Headers["image_path"])
+					// Continue processing even if conversion fails
+				} else {
+					// Store the ASCII art in Redis
+					asciiKey := message.ID + ":ascii"
+					logger.Info(ctx, "Storing ASCII art in Redis",
+						"id", message.ID,
+						"key", asciiKey,
+						"ascii_length", len(asciiArt))
+
+					// Log the ASCII art (this will show up in the logs)
+					// logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
+					fmt.Print(asciiArt)
+					// Store in Redis
+					err = redisConn.SetWithTracing(ctx, asciiKey, asciiArt, 24*time.Hour)
+					if err != nil {
+						logger.Error(ctx, "Failed to store ASCII art in Redis",
+							"error", err,
+							"id", message.ID,
+							"key", asciiKey)
+					} else {
+						logger.Info(ctx, "ASCII art stored successfully",
+							"id", message.ID,
+							"key", asciiKey)
+
+						// Add ASCII key to message headers so we know it's available
+						message.Headers["ascii_key"] = asciiKey
+					}
+				}
+
+				// Clean up the temporary image file
+				err = os.Remove(message.Headers["image_path"])
+				if err != nil {
+					logger.Warn(ctx, "Failed to remove temporary image file",
+						"error", err,
+						"path", message.Headers["image_path"])
+				}
+			}
+		}
+	}
+
 	// Set attributes for the message
 	span.SetAttributes(
 		attribute.String("message.subject", msg.Subject),
@@ -223,6 +370,156 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 	logger.Info(ctx, "Status check completed", "id", id, "exists", exists > 0)
 }
 
+// executeScript executes a Python script with the given arguments and returns the output
+func executeScript(ctx context.Context, scriptPath string, args ...string) (string, error) {
+	ctx, span := tracer.Start(ctx, "script.execute", trace.WithAttributes(
+		attribute.String("script.path", scriptPath),
+		attribute.StringSlice("script.args", args),
+	))
+	defer span.End()
+
+	logger.Info(ctx, "Executing script", "path", scriptPath, "args", args)
+
+	// Use the Python from our virtual environment
+	pythonPath := "/opt/venv/bin/python3"
+
+	// Check if the Python executable exists
+	if _, err := os.Stat(pythonPath); os.IsNotExist(err) {
+		// Fall back to system Python if virtual environment Python doesn't exist
+		pythonPath = "python3"
+		logger.Warn(ctx, "Virtual environment Python not found, falling back to system Python", "path", pythonPath)
+	}
+
+	// Prepare the command
+	cmd := exec.CommandContext(ctx, pythonPath, append([]string{scriptPath}, args...)...)
+
+	// Create buffers for stdout and stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	// Run the command
+	err := cmd.Run()
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "Script execution failed")
+		logger.Error(ctx, "Script execution failed",
+			"error", err,
+			"stderr", stderr.String(),
+			"path", scriptPath,
+			"args", args,
+		)
+		return "", fmt.Errorf("script execution failed: %w\nstderr: %s", err, stderr.String())
+	}
+
+	output := stdout.String()
+	logger.Info(ctx, "Script executed successfully",
+		"path", scriptPath,
+		"output_length", len(output),
+	)
+
+	// Log a preview of the output if it's not too large
+	if len(output) > 0 && len(output) <= 500 {
+		logger.Debug(ctx, "Script output", "output", output)
+	} else if len(output) > 500 {
+		logger.Debug(ctx, "Script output preview", "output", output[:500]+"...")
+	}
+
+	span.SetStatus(codes.Ok, "Script executed successfully")
+	return output, nil
+}
+
+// setupAsciiConverter creates the Python script for ASCII conversion
+func setupAsciiConverter() (string, error) {
+	// Script content
+	scriptContent := `#!/usr/bin/env python3
+#!/usr/bin/env python3
+import sys
+import os
+import json
+import ascii_magic
+import argparse
+
+def convert_image_to_ascii(image_path, columns=80, back='black'):
+    """
+    Convert an image to ASCII art
+    
+    Args:
+        image_path: Path to the image file
+        columns: Width of the ASCII art in characters
+        back: Background color
+        
+    Returns:
+        ASCII art string
+    """
+    try:
+        # Check if file exists
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+            
+        # Convert image to ASCII art
+        output = ascii_magic.from_image(
+            image_path
+        )
+        
+        # Convert to string and return
+        return output.to_terminal(columns=columns, back=back)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+def main():
+    parser = argparse.ArgumentParser(description='Convert image to ASCII art')
+    parser.add_argument('image_path', help='Path to the image file')
+    parser.add_argument('--columns', type=int, default=80, help='Width of the ASCII art in characters')
+    parser.add_argument('--back', default='black', help='Background color')
+    
+    args = parser.parse_args()
+    
+    result = convert_image_to_ascii(args.image_path, args.columns, args.back)
+    print(result)
+
+if __name__ == "__main__":
+    main()
+`
+
+	// Create the scripts directory if it doesn't exist
+	scriptsDir := "./scripts"
+	if err := os.MkdirAll(scriptsDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create scripts directory: %w", err)
+	}
+
+	// Path for the script
+	scriptPath := filepath.Join(scriptsDir, "ascii_converter.py")
+
+	// Write the script to a file
+	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
+		return "", fmt.Errorf("failed to write ASCII converter script: %w", err)
+	}
+
+	// Check if ascii_magic is installed, and install it if not
+	// Use the virtual environment Python if available
+	pythonPath := "/opt/venv/bin/python3"
+	pipPath := "/opt/venv/bin/pip"
+
+	if _, err := os.Stat(pipPath); os.IsNotExist(err) {
+		// Fall back to system Python if virtual environment Python doesn't exist
+		pythonPath = "python3"
+		pipPath = "pip3"
+	}
+
+	// Try to import ascii_magic to check if it's installed
+	cmd := exec.Command(pythonPath, "-c", "import ascii_magic")
+	if err := cmd.Run(); err != nil {
+		// Install ascii_magic if not already installed
+		installCmd := exec.Command(pipPath, "install", "ascii_magic", "pillow")
+		if err := installCmd.Run(); err != nil {
+			return "", fmt.Errorf("failed to install ascii_magic: %w", err)
+		}
+	}
+
+	return scriptPath, nil
+}
+
 func main() {
 	// Create context for the application
 	ctx, cancel := context.WithCancel(context.Background())
@@ -284,6 +581,15 @@ func main() {
 			logger.Error(ctx, "Error unsubscribing from NATS", "error", err)
 		}
 	}()
+
+	// Set up ASCII converter script
+	asciiConverterPath, err = setupAsciiConverter()
+	if err != nil {
+		logger.Error(ctx, "Failed to set up ASCII converter script", "error", err)
+		// Continue without ASCII conversion capability
+	} else {
+		logger.Info(ctx, "ASCII converter script set up successfully", "path", asciiConverterPath)
+	}
 
 	// Create a server with logging middleware
 	srv := server.NewServer("memorizer",
