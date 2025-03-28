@@ -243,39 +243,128 @@ func handleMessage(msg *nats.Msg) {
 			if asciiConverterPath != "" && message.Headers["image_path"] != "" {
 				logger.Info(ctx, "Converting image to ASCII art", "id", message.ID, "image_path", message.Headers["image_path"])
 
-				// Execute the ASCII converter script
-				asciiArt, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--columns", "80")
+				// Generate base filename for ASCII outputs
+				baseFilename := strings.TrimSuffix(message.Headers["image_path"], filepath.Ext(message.Headers["image_path"]))
+
+				// 1. Terminal mode (original functionality)
+				terminalAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "terminal", "--columns", "80")
 				if err != nil {
-					logger.Error(ctx, "Failed to convert image to ASCII art",
+					logger.Error(ctx, "Failed to convert image to terminal ASCII art",
 						"error", err,
 						"id", message.ID,
 						"image_path", message.Headers["image_path"])
-					// Continue processing even if conversion fails
+					// Continue with other conversions even if this one fails
 				} else {
-					// Store the ASCII art in Redis
-					asciiKey := message.ID + ":ascii"
-					logger.Info(ctx, "Storing ASCII art in Redis",
+					// Store the terminal ASCII art in Redis
+					terminalKey := message.ID + ":ascii:terminal"
+					logger.Info(ctx, "Storing terminal ASCII art in Redis",
 						"id", message.ID,
-						"key", asciiKey,
-						"ascii_length", len(asciiArt))
+						"key", terminalKey,
+						"ascii_length", len(terminalAscii))
 
-					// Log the ASCII art (this will show up in the logs)
-					// logger.Info(ctx, "ASCII Art Result", "art", "\n"+asciiArt)
-					fmt.Print(asciiArt)
+					// Print the ASCII art to logs
+					fmt.Print(terminalAscii)
+
 					// Store in Redis
-					err = redisConn.SetWithTracing(ctx, asciiKey, asciiArt, 24*time.Hour)
+					err = redisConn.SetWithTracing(ctx, terminalKey, terminalAscii, 24*time.Hour)
 					if err != nil {
-						logger.Error(ctx, "Failed to store ASCII art in Redis",
+						logger.Error(ctx, "Failed to store terminal ASCII art in Redis",
 							"error", err,
 							"id", message.ID,
-							"key", asciiKey)
+							"key", terminalKey)
 					} else {
-						logger.Info(ctx, "ASCII art stored successfully",
+						logger.Info(ctx, "Terminal ASCII art stored successfully",
 							"id", message.ID,
-							"key", asciiKey)
+							"key", terminalKey)
+						message.Headers["ascii_terminal_key"] = terminalKey
+					}
+				}
 
-						// Add ASCII key to message headers so we know it's available
-						message.Headers["ascii_key"] = asciiKey
+				// 2. File mode
+				txtFilename := baseFilename + "_ascii.txt"
+				fileAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "file", "--columns", "80", "--output-file", txtFilename)
+				if err != nil {
+					logger.Error(ctx, "Failed to convert image to file ASCII art",
+						"error", err,
+						"id", message.ID,
+						"image_path", message.Headers["image_path"])
+				} else {
+					// Read the generated file
+					logger.Info(ctx, "FILE generated ", fileAscii)
+					txtContent, err := os.ReadFile(txtFilename)
+					if err != nil {
+						logger.Error(ctx, "Failed to read ASCII text file",
+							"error", err,
+							"id", message.ID,
+							"file_path", txtFilename)
+					} else {
+						// Store the file content in Redis
+						fileKey := message.ID + ":ascii:file"
+						logger.Info(ctx, "Storing file ASCII art in Redis",
+							"id", message.ID,
+							"key", fileKey,
+							"file_path", txtFilename,
+							"content_length", len(txtContent))
+
+						err = redisConn.SetWithTracing(ctx, fileKey, string(txtContent), 24*time.Hour)
+						if err != nil {
+							logger.Error(ctx, "Failed to store file ASCII art in Redis",
+								"error", err,
+								"id", message.ID,
+								"key", fileKey)
+						} else {
+							logger.Info(ctx, "File ASCII art stored successfully",
+								"id", message.ID,
+								"key", fileKey)
+							message.Headers["ascii_file_key"] = fileKey
+						}
+
+						// Clean up the text file
+						os.Remove(txtFilename)
+					}
+				}
+
+				// 3. HTML mode
+				htmlFilename := baseFilename + "_ascii.html"
+				htmlAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
+				if err != nil {
+					logger.Error(ctx, "Failed to convert image to HTML ASCII art",
+						"error", err,
+						"id", message.ID,
+						"image_path", message.Headers["image_path"])
+				} else {
+					// Read the generated HTML file
+					logger.Info(ctx, "HTLM generated ", htmlAscii)
+					htmlContent, err := os.ReadFile(htmlFilename)
+					if err != nil {
+						logger.Error(ctx, "Failed to read HTML ASCII file",
+							"error", err,
+							"id", message.ID,
+							"file_path", htmlFilename)
+					} else {
+						// Store the HTML content in Redis
+						htmlKey := message.ID + ":ascii:html"
+						logger.Info(ctx, "Storing HTML ASCII art in Redis",
+							"id", message.ID,
+							"key", htmlKey,
+							"file_path", htmlFilename,
+							"content_length", len(htmlContent))
+
+						err = redisConn.SetWithTracing(ctx, htmlKey, string(htmlContent), 24*time.Hour)
+						if err != nil {
+							logger.Error(ctx, "Failed to store HTML ASCII art in Redis",
+								"error", err,
+								"id", message.ID,
+								"key", htmlKey)
+						} else {
+							logger.Info(ctx, "HTML ASCII art stored successfully",
+								"id", message.ID,
+								"key", htmlKey)
+							message.Headers["ascii_html_key"] = htmlKey
+						}
+
+						// Clean up the HTML file
+						os.Remove(htmlFilename)
 					}
 				}
 
@@ -433,49 +522,51 @@ func executeScript(ctx context.Context, scriptPath string, args ...string) (stri
 func setupAsciiConverter() (string, error) {
 	// Script content
 	scriptContent := `#!/usr/bin/env python3
-#!/usr/bin/env python3
 import sys
 import os
 import json
 import ascii_magic
 import argparse
 
-def convert_image_to_ascii(image_path, columns=80, back='black'):
-    """
-    Convert an image to ASCII art
-    
-    Args:
-        image_path: Path to the image file
-        columns: Width of the ASCII art in characters
-        back: Background color
-        
-    Returns:
-        ASCII art string
-    """
+def convert_image_to_ascii(image_path, mode='terminal', columns=80, back='black', output_file=None):
     try:
         # Check if file exists
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image file not found: {image_path}")
             
         # Convert image to ASCII art
-        output = ascii_magic.from_image(
-            image_path
-        )
+        output = ascii_magic.from_image(image_path)
         
-        # Convert to string and return
-        return output.to_terminal(columns=columns, back=back)
+        # Handle different output modes
+        if mode == 'terminal':
+            return output.to_terminal(columns=columns, back=back)
+        elif mode == 'file':
+            if output_file is None:
+                output_file = f"{os.path.splitext(image_path)[0]}_ascii.txt"
+            output.to_file(output_file, columns=columns)
+            return f"ASCII art saved to {output_file}"
+        elif mode == 'html':
+            if output_file is None:
+                output_file = f"{os.path.splitext(image_path)[0]}_ascii.html"
+            output.to_html_file(output_file, columns=columns)
+            return f"HTML ASCII art saved to {output_file}"
+        else:
+            raise ValueError(f"Invalid mode: {mode}. Must be 'terminal', 'file', or 'html'")
     except Exception as e:
         return json.dumps({"error": str(e)})
 
 def main():
     parser = argparse.ArgumentParser(description='Convert image to ASCII art')
     parser.add_argument('image_path', help='Path to the image file')
+    parser.add_argument('--mode', choices=['terminal', 'file', 'html'], default='terminal', 
+                        help='Output mode: terminal, file, or html (default: terminal)')
     parser.add_argument('--columns', type=int, default=80, help='Width of the ASCII art in characters')
     parser.add_argument('--back', default='black', help='Background color')
+    parser.add_argument('--output-file', help='Path for output file (used in file and html modes)')
     
     args = parser.parse_args()
     
-    result = convert_image_to_ascii(args.image_path, args.columns, args.back)
+    result = convert_image_to_ascii(args.image_path, args.mode, args.columns, args.back, args.output_file)
 
 if __name__ == "__main__":
     main()
