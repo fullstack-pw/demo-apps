@@ -35,8 +35,8 @@ type Message struct {
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
+// Global variables
 var (
-	// Global variables
 	natsConn *connections.NATSConnection
 	logger   *logging.Logger
 	tracer   = tracing.GetTracer("enqueuer")
@@ -507,7 +507,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("enqueuer",
-		logging.WithMinLevel(logging.Debug),
+		logging.WithMinLevel(logging.Info),
 		logging.WithJSONFormat(true),
 	)
 
