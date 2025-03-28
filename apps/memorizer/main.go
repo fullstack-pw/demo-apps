@@ -720,7 +720,7 @@ func main() {
 
 	// Register health checks
 	srv.RegisterHealthChecks(
-		[]health.Checker{natsConn, redisConn}, // Liveness checks
+		[]health.Checker{natsConn, redisConn},
 		[]health.Checker{natsConn, redisConn}, // Readiness checks
 	)
 

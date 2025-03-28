@@ -784,7 +784,7 @@ func main() {
 	srv.HandleFunc("/ascii/html", handleAsciiHtml)
 	// Register health checks
 	srv.RegisterHealthChecks(
-		[]health.Checker{redisConn, postgresConn}, // Liveness checks
+		[]health.Checker{redisConn, postgresConn},
 		[]health.Checker{redisConn, postgresConn}, // Readiness checks
 	)
 
