@@ -380,8 +380,18 @@ func executeScript(ctx context.Context, scriptPath string, args ...string) (stri
 
 	logger.Info(ctx, "Executing script", "path", scriptPath, "args", args)
 
+	// Use the Python from our virtual environment
+	pythonPath := "/opt/venv/bin/python3"
+
+	// Check if the Python executable exists
+	if _, err := os.Stat(pythonPath); os.IsNotExist(err) {
+		// Fall back to system Python if virtual environment Python doesn't exist
+		pythonPath = "python3"
+		logger.Warn(ctx, "Virtual environment Python not found, falling back to system Python", "path", pythonPath)
+	}
+
 	// Prepare the command
-	cmd := exec.CommandContext(ctx, "python3", append([]string{scriptPath}, args...)...)
+	cmd := exec.CommandContext(ctx, pythonPath, append([]string{scriptPath}, args...)...)
 
 	// Create buffers for stdout and stderr
 	var stdout, stderr bytes.Buffer
