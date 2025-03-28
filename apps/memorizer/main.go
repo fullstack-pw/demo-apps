@@ -433,6 +433,7 @@ func executeScript(ctx context.Context, scriptPath string, args ...string) (stri
 func setupAsciiConverter() (string, error) {
 	// Script content
 	scriptContent := `#!/usr/bin/env python3
+#!/usr/bin/env python3
 import sys
 import os
 import json
@@ -458,14 +459,11 @@ def convert_image_to_ascii(image_path, columns=80, back='black'):
             
         # Convert image to ASCII art
         output = ascii_magic.from_image(
-            image_path,
-            columns=columns,
-            mode=ascii_magic.Modes.ASCII,
-            back=back
+            image_path
         )
         
         # Convert to string and return
-        return str(output)
+        return output.to_terminal(columns=columns, back=back)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
