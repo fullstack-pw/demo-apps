@@ -457,7 +457,7 @@ def convert_image_to_ascii(image_path, columns=80, back='black'):
             raise FileNotFoundError(f"Image file not found: {image_path}")
             
         # Convert image to ASCII art
-        output = ascii_magic.from_image_file(
+        output = ascii_magic.from_image(
             image_path,
             columns=columns,
             mode=ascii_magic.Modes.ASCII,
