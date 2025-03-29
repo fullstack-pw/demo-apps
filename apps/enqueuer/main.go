@@ -294,6 +294,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		// Continue without ASCII results
 	} else {
 		// Extract ASCII results
+		fmt.Print(result) // DEBUG SESSION
 		if terminal, ok := result["ascii_terminal"].(string); ok && terminal != "" {
 			asciiTerminal = terminal
 			response["ascii_terminal"] = terminal

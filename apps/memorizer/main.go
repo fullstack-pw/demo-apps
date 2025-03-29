@@ -312,6 +312,8 @@ func handleMessage(msg *nats.Msg) {
 					fmt.Print(terminalAscii)
 
 					// Store in Redis
+					fmt.Print(terminalKey)   // DEBUG SESSION
+					fmt.Print(terminalAscii) // DEBUG SESSION
 					err = redisConn.SetWithTracing(ctx, terminalKey, terminalAscii, 24*time.Hour)
 					if err != nil {
 						logger.Error(ctx, "Failed to store terminal ASCII art in Redis",
