@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/nats-io/nats.go"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -41,6 +43,113 @@ var (
 	logger   *logging.Logger
 	tracer   = tracing.GetTracer("enqueuer")
 )
+
+// ResponseCache stores response messages by trace ID
+type ResponseCache struct {
+	mu      sync.Mutex
+	results map[string]map[string]interface{}
+	signals map[string]chan struct{}
+}
+
+// Global response cache
+var responseCache = ResponseCache{
+	results: make(map[string]map[string]interface{}),
+	signals: make(map[string]chan struct{}),
+}
+
+// Add response to cache
+func (rc *ResponseCache) Add(traceID string, response map[string]interface{}) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+
+	rc.results[traceID] = response
+
+	// Signal to any waiting goroutines that the response has arrived
+	if signal, ok := rc.signals[traceID]; ok {
+		close(signal)
+	}
+}
+
+// Get response from cache with timeout
+func (rc *ResponseCache) GetWithTimeout(traceID string, timeout time.Duration) (map[string]interface{}, error) {
+	// Check if result is already in cache
+	rc.mu.Lock()
+	if result, ok := rc.results[traceID]; ok {
+		// Clean up after retrieval
+		delete(rc.results, traceID)
+		rc.mu.Unlock()
+		return result, nil
+	}
+
+	// Create signal channel for this trace ID if none exists
+	if _, ok := rc.signals[traceID]; !ok {
+		rc.signals[traceID] = make(chan struct{})
+	}
+	signal := rc.signals[traceID]
+	rc.mu.Unlock()
+
+	// Wait for signal or timeout
+	select {
+	case <-signal:
+		// Response arrived, get it from cache
+		rc.mu.Lock()
+		defer rc.mu.Unlock()
+
+		result, ok := rc.results[traceID]
+		if !ok {
+			return nil, fmt.Errorf("result was signaled but not found in cache")
+		}
+
+		// Clean up
+		delete(rc.results, traceID)
+		delete(rc.signals, traceID)
+
+		return result, nil
+
+	case <-time.After(timeout):
+		// Timeout occurred
+		rc.mu.Lock()
+		defer rc.mu.Unlock()
+
+		// Clean up
+		delete(rc.signals, traceID)
+
+		return nil, fmt.Errorf("timed out waiting for response")
+	}
+}
+
+// Clean up expired entries (should be called periodically)
+func (rc *ResponseCache) CleanExpired(maxAge time.Duration) {
+	// Implementation would depend on when entries were added, we could add timestamps
+	// For now, we'll skip this as we're cleaning up after retrieval
+}
+
+// handleResultMessage processes messages from the result queue
+func handleResultMessage(msg *nats.Msg) {
+	// Extract trace context from message if available
+	parentCtx := context.Background()
+
+	// Parse the message
+	var response map[string]interface{}
+	if err := json.Unmarshal(msg.Data, &response); err != nil {
+		logger.Error(parentCtx, "Failed to parse result message", "error", err)
+		return
+	}
+
+	// Get trace ID from the response
+	traceID, ok := response["trace_id"].(string)
+	if !ok || traceID == "" {
+		logger.Error(parentCtx, "Missing trace ID in result message")
+		return
+	}
+
+	// Create context with trace ID for logging
+	ctx := context.Background()
+	logger.Info(ctx, "Received result message", "trace_id", traceID, "subject", msg.Subject)
+
+	// Add to response cache
+	responseCache.Add(traceID, response)
+}
 
 // publishToNATS publishes a message to NATS with tracing
 func publishToNATS(ctx context.Context, queueName string, msg Message) error {
@@ -165,19 +274,53 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return success response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	// Get current trace ID for correlation
+	traceID := tracing.GetTraceID(ctx)
+
+	// Wait for response with timeout
+	var asciiTerminal, asciiHTML string
+	timeout := 30 * time.Second // Adjust timeout as needed
+
 	response := map[string]string{
 		"status":    "queued",
 		"queue":     queueName, // Return the original queue name to the client
 		"image_url": imageURL,
 	}
+
+	// Wait for ASCII results
+	result, err := responseCache.GetWithTimeout(traceID, timeout)
+	if err != nil {
+		logger.Warn(ctx, "Timed out waiting for ASCII results", "error", err)
+		// Continue without ASCII results
+	} else {
+		// Extract ASCII results
+		if terminal, ok := result["ascii_terminal"].(string); ok && terminal != "" {
+			asciiTerminal = terminal
+			response["ascii_terminal"] = "available"
+		}
+
+		if html, ok := result["ascii_html"].(string); ok && html != "" {
+			asciiHTML = html
+			response["ascii_html"] = "available"
+		}
+
+		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
+	}
+
+	// Return full response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Error(ctx, "Error encoding response", "error", err)
 	}
 
-	logger.Info(ctx, "Request handled successfully", "queue", queueName, "message_id", msg.ID, "image_url", imageURL)
+	logger.Info(ctx, "Request handled successfully",
+		"queue", queueName,
+		"message_id", msg.ID,
+		"image_url", imageURL,
+		"has_ascii_terminal", asciiTerminal != "",
+		"has_ascii_html", asciiHTML != "")
 }
 
 // handleCheckMemorizer checks if a message was processed by memorizer
@@ -246,6 +389,70 @@ func handleCheckWriter(w http.ResponseWriter, r *http.Request) {
 	if _, err := io.Copy(w, resp.Body); err != nil {
 		logger.Error(ctx, "Error copying response", "error", err)
 	}
+}
+
+// handleAsciiTerminal returns the terminal ASCII art
+func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get trace ID from query parameter
+	traceID := r.URL.Query().Get("trace_id")
+	if traceID == "" {
+		http.Error(w, "Missing trace_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Try to get from response cache
+	result, err := responseCache.GetWithTimeout(traceID, 100*time.Millisecond) // Short timeout as it should be there already
+	if err != nil {
+		logger.Error(ctx, "Failed to get ASCII terminal", "error", err, "trace_id", traceID)
+		http.Error(w, "ASCII terminal not found", http.StatusNotFound)
+		return
+	}
+
+	// Extract terminal ASCII
+	terminal, ok := result["ascii_terminal"].(string)
+	if !ok || terminal == "" {
+		logger.Error(ctx, "ASCII terminal not available", "trace_id", traceID)
+		http.Error(w, "ASCII terminal not available", http.StatusNotFound)
+		return
+	}
+
+	// Return the ASCII art
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Write([]byte(terminal))
+}
+
+// handleAsciiHTML returns the HTML ASCII art
+func handleAsciiHTML(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Get trace ID from query parameter
+	traceID := r.URL.Query().Get("trace_id")
+	if traceID == "" {
+		http.Error(w, "Missing trace_id parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Try to get from response cache
+	result, err := responseCache.GetWithTimeout(traceID, 100*time.Millisecond) // Short timeout as it should be there already
+	if err != nil {
+		logger.Error(ctx, "Failed to get ASCII HTML", "error", err, "trace_id", traceID)
+		http.Error(w, "ASCII HTML not found", http.StatusNotFound)
+		return
+	}
+
+	// Extract HTML ASCII
+	html, ok := result["ascii_html"].(string)
+	if !ok || html == "" {
+		logger.Error(ctx, "ASCII HTML not available", "trace_id", traceID)
+		http.Error(w, "ASCII HTML not available", http.StatusNotFound)
+		return
+	}
+
+	// Return the ASCII HTML
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write([]byte(html))
 }
 
 func searchGoogleImages(ctx context.Context, query string) (string, error) {
@@ -531,6 +738,20 @@ func main() {
 	}
 	defer natsConn.Close()
 
+	// Subscribe to result queue
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+	resultQueue := fmt.Sprintf("%s.result-queue", env)
+
+	logger.Info(ctx, "Subscribing to result queue", "queue", resultQueue)
+	sub, err := natsConn.SubscribeWithTracing(resultQueue, handleResultMessage)
+	if err != nil {
+		logger.Fatal(ctx, "Failed to subscribe to result queue", "error", err)
+	}
+	defer sub.Unsubscribe()
+
 	// Create a server with logging middleware
 	srv := server.NewServer("enqueuer",
 		server.WithLogger(logger),
@@ -567,7 +788,9 @@ func main() {
 		[]health.Checker{natsConn},
 		[]health.Checker{natsConn}, // Readiness checks
 	)
-
+	// Register ASCII handlers
+	srv.HandleFunc("/ascii/terminal", handleAsciiTerminal)
+	srv.HandleFunc("/ascii/html", handleAsciiHTML)
 	// Set up signal handling
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
