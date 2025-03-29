@@ -296,12 +296,12 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		// Extract ASCII results
 		if terminal, ok := result["ascii_terminal"].(string); ok && terminal != "" {
 			asciiTerminal = terminal
-			response["ascii_terminal"] = "available"
+			response["ascii_terminal"] = terminal
 		}
 
 		if html, ok := result["ascii_html"].(string); ok && html != "" {
 			asciiHTML = html
-			response["ascii_html"] = "available"
+			response["ascii_html"] = html
 		}
 
 		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
