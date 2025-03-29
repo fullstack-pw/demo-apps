@@ -228,6 +228,12 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
 
+	logger.Info(ctx, "Publishing results to NATS", // DEBUG SESSION
+		"queue", responseQueue, // DEBUG SESSION
+		"message_id", messageId, // DEBUG SESSION
+		"trace_id", traceId, // DEBUG SESSION
+		"ascii_terminal_length", len(asciiTerminal), // DEBUG SESSION
+		"ascii_html_length", len(asciiHTML)) // DEBUG SESSION
 	// Publish to NATS
 	err = natsConn.PublishWithTracing(ctx, responseQueue, responseData)
 	if err != nil {

@@ -57,6 +57,13 @@ var responseCache = ResponseCache{
 	signals: make(map[string]chan struct{}),
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // Add response to cache
 func (rc *ResponseCache) Add(traceID string, response map[string]interface{}) {
 	rc.mu.Lock()
@@ -143,6 +150,17 @@ func handleResultMessage(msg *nats.Msg) {
 		return
 	}
 
+	if terminal, ok := response["ascii_terminal"].(string); ok { //DEBUG SESSION
+		logger.Debug(parentCtx, "Received ASCII terminal", "trace_id", traceID, "length", len(terminal)) //DEBUG SESSION
+	} else { //DEBUG SESSION
+		logger.Debug(parentCtx, "No ASCII terminal in response", "trace_id", traceID) //DEBUG SESSION
+	} //DEBUG SESSION
+
+	if html, ok := response["ascii_html"].(string); ok { //DEBUG SESSION
+		logger.Debug(parentCtx, "Received ASCII HTML", "trace_id", traceID, "length", len(html)) //DEBUG SESSION
+	} else { //DEBUG SESSION
+		logger.Debug(parentCtx, "No ASCII HTML in response", "trace_id", traceID) //DEBUG SESSION
+	} //DEBUG SESSION
 	// Create context with trace ID for logging
 	ctx := context.Background()
 	logger.Info(ctx, "Received result message", "trace_id", traceID, "subject", msg.Subject)
@@ -294,16 +312,17 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		// Continue without ASCII results
 	} else {
 		// Extract ASCII results
-		fmt.Print(result) // DEBUG SESSION
-		if terminal, ok := result["ascii_terminal"].(string); ok && terminal != "" {
-			asciiTerminal = terminal
-			response["ascii_terminal"] = terminal
-		}
-
-		if html, ok := result["ascii_html"].(string); ok && html != "" {
-			asciiHTML = html
-			response["ascii_html"] = html
-		}
+		logger.Debug(ctx, "Response from result queue", "result", fmt.Sprintf("%+v", result)) // DEBUG SESSION
+		if terminal, ok := result["ascii_terminal"].(string); ok {                            // DEBUG SESSION
+			logger.Debug(ctx, "ASCII terminal from result", "length", len(terminal), "first_chars", terminal[:min(20, len(terminal))]) // DEBUG SESSION
+		} else { // DEBUG SESSION
+			logger.Debug(ctx, "ASCII terminal not found in result or not a string") // DEBUG SESSION
+		} // DEBUG SESSION
+		if html, ok := result["ascii_html"].(string); ok { // DEBUG SESSION
+			logger.Debug(ctx, "ASCII HTML from result", "length", len(html), "first_chars", html[:min(20, len(html))]) // DEBUG SESSION
+		} else { // DEBUG SESSION
+			logger.Debug(ctx, "ASCII HTML not found in result or not a string") // DEBUG SESSION
+		} // DEBUG SESSION
 
 		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
 	}
