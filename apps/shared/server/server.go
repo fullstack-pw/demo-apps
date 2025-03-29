@@ -58,16 +58,34 @@ func WithTimeout(read, write, idle time.Duration) ServerOption {
 	}
 }
 
-// NewServer creates a new HTTP server
+// PathConditionalTracing wraps a handler and applies tracing except for specified paths
+func PathConditionalTracing(handler http.Handler, name string, excludePaths []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if path should be excluded from tracing
+		for _, path := range excludePaths {
+			if r.URL.Path == path {
+				// Pass through without tracing
+				handler.ServeHTTP(w, r)
+				return
+			}
+		}
+
+		// Apply tracing for non-excluded paths
+		otelHandler := otelhttp.NewHandler(handler, name)
+		otelHandler.ServeHTTP(w, r)
+	})
+}
+
 func NewServer(name string, options ...ServerOption) *Server {
 	mux := http.NewServeMux()
 
+	// Create server with initial configuration
 	server := &Server{
 		name: name,
 		addr: ":8080", // Default port
 		mux:  mux,
 		server: &http.Server{
-			Handler:      otelhttp.NewHandler(mux, name),
+			// We'll set the handler after applying options
 			ReadTimeout:  10 * time.Second,
 			WriteTimeout: 10 * time.Second,
 			IdleTimeout:  30 * time.Second,
@@ -78,12 +96,18 @@ func NewServer(name string, options ...ServerOption) *Server {
 		},
 	}
 
+	// Apply custom options
 	for _, option := range options {
 		option(server)
 	}
 
 	// Update server address
 	server.server.Addr = server.addr
+
+	// Setup handler with conditional tracing
+	excludePaths := []string{"/health", "/livez", "/readyz"}
+	tracingHandler := PathConditionalTracing(mux, name, excludePaths)
+	server.server.Handler = tracingHandler
 
 	return server
 }
@@ -102,18 +126,30 @@ func (s *Server) HandleFunc(pattern string, handlerFunc http.HandlerFunc) {
 	s.mux.Handle(pattern, wrappedHandler)
 }
 
-func (s *Server) RegisterHealthChecks(livenessCheckers, readinessCheckers []health.Checker) {
-	// Determine if verbose health check logging should be enabled based on logger level
-	isDebugMode := false
-	if s.logger != nil {
-		isDebugMode = s.logger.IsLevelEnabled(logging.Debug)
+// ConditionalTracingHandler wraps a handler with tracing only if the condition is met
+func ConditionalTracingHandler(h http.Handler, operationName string, condition bool) http.Handler {
+	if condition {
+		return otelhttp.NewHandler(h, operationName)
 	}
+	return h
+}
+
+func (s *Server) RegisterHealthChecks(livenessCheckers, readinessCheckers []health.Checker) {
+	isDebugMode := s.logger != nil && s.logger.IsLevelEnabled(logging.Debug)
 
 	healthConfig := health.HealthCheckConfig{
 		VerboseLogging: isDebugMode,
 	}
 
-	health.RegisterHealthEndpoints(s.mux, healthConfig, livenessCheckers, readinessCheckers)
+	// Create handlers
+	healthHandler := health.CreateHealthHandler(healthConfig, append(livenessCheckers, readinessCheckers...)...)
+	livenessHandler := health.CreateLivenessHandler(healthConfig)
+	readinessHandler := health.CreateReadinessHandler(healthConfig, readinessCheckers...)
+
+	// Register with conditional tracing
+	s.mux.Handle("/health", ConditionalTracingHandler(healthHandler, "health-check", isDebugMode))
+	s.mux.Handle("/livez", ConditionalTracingHandler(livenessHandler, "liveness-check", isDebugMode))
+	s.mux.Handle("/readyz", ConditionalTracingHandler(readinessHandler, "readiness-check", isDebugMode))
 }
 
 // Start starts the server
@@ -188,21 +224,27 @@ func LoggingMiddleware(logger *logging.Logger) Middleware {
 			// Process the request
 			next.ServeHTTP(wrapper, r)
 
-			// Log the request
-			duration := time.Since(start)
-			logger.Info(r.Context(),
-				fmt.Sprintf("%s %s %d %s",
-					r.Method,
-					r.URL.Path,
-					wrapper.statusCode,
-					duration,
-				),
-				"method", r.Method,
-				"path", r.URL.Path,
-				"status", wrapper.statusCode,
-				"duration_ms", duration.Milliseconds(),
-				"user_agent", r.UserAgent(),
-			)
+			// Check if this is a health check endpoint
+			isHealthEndpoint := r.URL.Path == "/health" || r.URL.Path == "/livez" || r.URL.Path == "/readyz"
+
+			// Only log health check endpoints if in Debug mode
+			if !isHealthEndpoint || logger.IsLevelEnabled(logging.Debug) {
+				// Log the request
+				duration := time.Since(start)
+				logger.Info(r.Context(),
+					fmt.Sprintf("%s %s %d %s",
+						r.Method,
+						r.URL.Path,
+						wrapper.statusCode,
+						duration,
+					),
+					"method", r.Method,
+					"path", r.URL.Path,
+					"status", wrapper.statusCode,
+					"duration_ms", duration.Milliseconds(),
+					"user_agent", r.UserAgent(),
+				)
+			}
 		})
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -26,6 +27,52 @@ type Config struct {
 	AdditionalAttrs   []attribute.KeyValue
 	ShutdownTimeout   time.Duration
 	DisableForTesting bool
+	DebugMode         bool
+}
+
+// HealthCheckFilterSampler filters out health check endpoints when not in debug mode
+type HealthCheckFilterSampler struct {
+	baseSampler sdktrace.Sampler
+	debugMode   bool
+}
+
+// ShouldSample implements the Sampler interface
+func (s *HealthCheckFilterSampler) ShouldSample(params sdktrace.SamplingParameters) sdktrace.SamplingResult {
+	// First get the parent's sampling decision
+	result := s.baseSampler.ShouldSample(params)
+
+	// If not in debug mode, check if this is a health check span
+	if !s.debugMode {
+		// Check if span name contains health check related names
+		spanName := params.Name
+		if strings.Contains(spanName, "health") ||
+			strings.Contains(spanName, "/health") ||
+			strings.Contains(spanName, "/livez") ||
+			strings.Contains(spanName, "/readyz") {
+			// Return "don't sample" decision
+			return sdktrace.SamplingResult{
+				Decision:   sdktrace.Drop,
+				Tracestate: result.Tracestate,
+			}
+		}
+	}
+
+	// Otherwise, return the original decision
+	return result
+}
+
+// Description returns a description of the sampler
+func (s *HealthCheckFilterSampler) Description() string {
+	return fmt.Sprintf("HealthCheckFilterSampler(debugMode=%v, base=%s)",
+		s.debugMode, s.baseSampler.Description())
+}
+
+// NewHealthCheckFilterSampler creates a new sampler that filters health checks
+func NewHealthCheckFilterSampler(baseSampler sdktrace.Sampler, debugMode bool) sdktrace.Sampler {
+	return &HealthCheckFilterSampler{
+		baseSampler: baseSampler,
+		debugMode:   debugMode,
+	}
 }
 
 // DefaultConfig returns a configuration with sensible defaults
@@ -98,8 +145,12 @@ func InitTracer(cfg Config) (*sdktrace.TracerProvider, error) {
 
 	// Create trace provider
 	fmt.Println("Creating trace provider...")
+	baseSampler := sdktrace.ParentBased(sdktrace.AlwaysSample())
+	// Wrap it with our custom health check filter
+	customSampler := NewHealthCheckFilterSampler(baseSampler, cfg.DebugMode)
+
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSampler(customSampler),
 		sdktrace.WithBatcher(exporter),
 		sdktrace.WithResource(res),
 	)
