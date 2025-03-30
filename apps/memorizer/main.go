@@ -210,10 +210,10 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 
 	// Create response queue name with environment prefix
 	responseQueue := fmt.Sprintf("%s.result-queue", env)
-	fmt.Println("################################ DEBUG HERE")                   // DEBUG SESSION
-	fmt.Printf("terminalAscii (asciiTerminal) value: %s\n", asciiTerminal)       // DEBUG SESSION
-	fmt.Printf("terminalAscii (asciiTerminal) lenght: %d\n", len(asciiTerminal)) // DEBUG SESSION
-	fmt.Println("################################ DEBUG HERE")                   // DEBUG SESSION
+	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
+	fmt.Printf("ascii_html value: %s\n", asciiHTML)            // DEBUG SESSION
+	fmt.Printf("ascii_html lenght: %d\n", len(asciiHTML))      // DEBUG SESSION
+	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
 
 	// Create response payload
 	response := map[string]interface{}{
