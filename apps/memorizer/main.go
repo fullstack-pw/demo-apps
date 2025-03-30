@@ -392,6 +392,7 @@ func handleMessage(msg *nats.Msg) {
 					// Read the generated HTML file
 					logger.Info(ctx, "HTLM generated ", htmlAscii)
 					htmlContent, err := os.ReadFile(htmlFilename)
+					htmlAscii = string(htmlContent)
 					if err != nil {
 						logger.Error(ctx, "Failed to read HTML ASCII file",
 							"error", err,
