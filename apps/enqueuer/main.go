@@ -304,16 +304,16 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		// Continue without ASCII results
 	} else {
 		// Extract ASCII results
-		logger.Debug(ctx, "Response from result queue", "result", fmt.Sprintf("%+v", result)) // DEBUG SESSION
-		if terminal, ok := result["ascii_terminal"].(string); ok {                            // DEBUG SESSION
-			logger.Debug(ctx, "ASCII terminal from result", "length", len(terminal), "first_chars", terminal[:min(20, len(terminal))]) // DEBUG SESSION
+		logger.Info(ctx, "Response from result queue", "result", fmt.Sprintf("%+v", result)) // DEBUG SESSION
+		if terminal, ok := result["ascii_terminal"].(string); ok {                           // DEBUG SESSION
+			logger.Info(ctx, "ASCII terminal from result", "length", len(terminal), "first_chars", terminal[:min(20, len(terminal))]) // DEBUG SESSION
 		} else { // DEBUG SESSION
-			logger.Debug(ctx, "ASCII terminal not found in result or not a string") // DEBUG SESSION
+			logger.Info(ctx, "ASCII terminal not found in result or not a string") // DEBUG SESSION
 		} // DEBUG SESSION
 		if html, ok := result["ascii_html"].(string); ok { // DEBUG SESSION
-			logger.Debug(ctx, "ASCII HTML from result", "length", len(html), "first_chars", html[:min(20, len(html))]) // DEBUG SESSION
+			logger.Info(ctx, "ASCII HTML from result", "length", len(html), "first_chars", html[:min(20, len(html))]) // DEBUG SESSION
 		} else { // DEBUG SESSION
-			logger.Debug(ctx, "ASCII HTML not found in result or not a string") // DEBUG SESSION
+			logger.Info(ctx, "ASCII HTML not found in result or not a string") // DEBUG SESSION
 		} // DEBUG SESSION
 
 		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
