@@ -382,7 +382,7 @@ func handleMessage(msg *nats.Msg) {
 
 				// 3. HTML mode
 				htmlFilename := baseFilename + "_ascii.html"
-				htmlAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
+				htmlAscii, err = executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
 				if err != nil {
 					logger.Error(ctx, "Failed to convert image to HTML ASCII art",
 						"error", err,

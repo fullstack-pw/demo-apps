@@ -314,7 +314,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]string{
-		"status":           "queued",
+		"status":           "completed",
 		"queue":            queueName, // Return the original queue name to the client
 		"image_url":        imageURL,
 		"image_ascii_text": result["ascii_terminal"].(string),
