@@ -210,6 +210,10 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 
 	// Create response queue name with environment prefix
 	responseQueue := fmt.Sprintf("%s.result-queue", env)
+	fmt.Println("################################ DEBUG HERE")                   // DEBUG SESSION
+	fmt.Printf("terminalAscii (asciiTerminal) value: %s\n", asciiTerminal)       // DEBUG SESSION
+	fmt.Printf("terminalAscii (asciiTerminal) lenght: %d\n", len(asciiTerminal)) // DEBUG SESSION
+	fmt.Println("################################ DEBUG HERE")                   // DEBUG SESSION
 
 	// Create response payload
 	response := map[string]interface{}{
@@ -318,8 +322,6 @@ func handleMessage(msg *nats.Msg) {
 					fmt.Print(terminalAscii)
 
 					// Store in Redis
-					fmt.Print(terminalKey)   // DEBUG SESSION
-					fmt.Print(terminalAscii) // DEBUG SESSION
 					err = redisConn.SetWithTracing(ctx, terminalKey, terminalAscii, 24*time.Hour)
 					if err != nil {
 						logger.Error(ctx, "Failed to store terminal ASCII art in Redis",
@@ -476,10 +478,6 @@ func handleMessage(msg *nats.Msg) {
 	// 	// Get the HTML ASCII from Redis
 	// 	htmlAscii, _ = redisConn.GetWithTracing(ctx, htmlKey)
 	// }
-	fmt.Println("################################ DEBUG HERE")   // DEBUG SESSION
-	fmt.Printf("terminalAscii value: %s\n", terminalAscii)       // DEBUG SESSION
-	fmt.Printf("terminalAscii lenght: %d\n", len(terminalAscii)) // DEBUG SESSION
-	fmt.Println("################################ DEBUG HERE")   // DEBUG SESSION
 	// Directly publish the results we already have in memory
 	if err := publishResultsToNATS(ctx, message.ID, traceId, terminalAscii, "", htmlAscii, message.Headers); err != nil {
 		span.RecordError(err)
