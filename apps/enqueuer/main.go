@@ -291,12 +291,6 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	var asciiTerminal, asciiHTML string
 	timeout := 30 * time.Second // Adjust timeout as needed
 
-	response := map[string]string{
-		"status":    "queued",
-		"queue":     queueName, // Return the original queue name to the client
-		"image_url": imageURL,
-	}
-
 	// Wait for ASCII results
 	result, err := responseCache.GetWithTimeout(traceID, timeout)
 	if err != nil {
@@ -317,6 +311,14 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		} // DEBUG SESSION
 
 		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
+	}
+
+	response := map[string]string{
+		"status":           "queued",
+		"queue":            queueName, // Return the original queue name to the client
+		"image_url":        imageURL,
+		"image_ascii_text": result["ascii_terminal"].(string),
+		"image_ascii_html": result["ascii_html"].(string),
 	}
 
 	// Return full response
