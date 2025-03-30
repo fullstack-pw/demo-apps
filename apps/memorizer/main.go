@@ -198,11 +198,56 @@ func downloadImage(ctx context.Context, imageURL string) (string, error) {
 	return tempFile.Name(), nil
 }
 
+func publishResultsToNATS(ctx context.Context, messageId string, traceId string, asciiTerminal, asciiFile, asciiHTML string, headers map[string]string) error {
+	ctx, span := tracer.Start(ctx, "nats.publish_results")
+	defer span.End()
+
+	// Get environment
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // Default to dev if ENV not set
+	}
+
+	// Create response queue name with environment prefix
+	responseQueue := fmt.Sprintf("%s.result-queue", env)
+
+	// Create response payload
+	response := map[string]interface{}{
+		"message_id":     messageId,
+		"trace_id":       traceId,
+		"ascii_terminal": asciiTerminal,
+		"ascii_html":     asciiHTML,
+		"headers":        headers,
+	}
+
+	// Convert to JSON
+	responseData, err := json.Marshal(response)
+	if err != nil {
+		span.RecordError(err)
+		logger.Error(ctx, "Failed to marshal response message", "error", err)
+		return fmt.Errorf("failed to marshal response: %w", err)
+	}
+
+	// Publish to NATS
+	err = natsConn.PublishWithTracing(ctx, responseQueue, responseData)
+	if err != nil {
+		span.RecordError(err)
+		logger.Error(ctx, "Failed to publish response message", "error", err)
+		return fmt.Errorf("failed to publish response: %w", err)
+	}
+
+	logger.Info(ctx, "Published results to NATS",
+		"queue", responseQueue,
+		"message_id", messageId,
+		"trace_id", traceId)
+	return nil
+}
+
 // handleMessage processes a message from NATS with tracing
 func handleMessage(msg *nats.Msg) {
 	// Extract trace context from message if available
 	parentCtx := context.Background()
-
+	var terminalAscii, htmlAscii string
 	// Try to unmarshal the message to extract headers
 	var message Message
 	if err := json.Unmarshal(msg.Data, &message); err == nil && message.Headers != nil {
@@ -248,7 +293,7 @@ func handleMessage(msg *nats.Msg) {
 				baseFilename := strings.TrimSuffix(message.Headers["image_path"], filepath.Ext(message.Headers["image_path"]))
 
 				// 1. Terminal mode (original functionality)
-				terminalAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "terminal", "--columns", "80")
+				terminalAscii, err = executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "terminal", "--columns", "80")
 				if err != nil {
 					logger.Error(ctx, "Failed to convert image to terminal ASCII art",
 						"error", err,
@@ -327,7 +372,7 @@ func handleMessage(msg *nats.Msg) {
 
 				// 3. HTML mode
 				htmlFilename := baseFilename + "_ascii.html"
-				htmlAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
+				htmlAscii, err = executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
 				if err != nil {
 					logger.Error(ctx, "Failed to convert image to HTML ASCII art",
 						"error", err,
@@ -337,6 +382,7 @@ func handleMessage(msg *nats.Msg) {
 					// Read the generated HTML file
 					logger.Info(ctx, "HTLM generated ", htmlAscii)
 					htmlContent, err := os.ReadFile(htmlFilename)
+					htmlAscii = string(htmlContent)
 					if err != nil {
 						logger.Error(ctx, "Failed to read HTML ASCII file",
 							"error", err,
@@ -408,6 +454,25 @@ func handleMessage(msg *nats.Msg) {
 		span.SetStatus(codes.Error, "Failed to store message")
 		logger.Error(ctx, "Error storing message", "error", err, "id", message.ID)
 		return
+	}
+
+	// Extract traceId for correlation
+	traceId := tracing.GetTraceID(ctx)
+
+	// // Get any ASCII art that was generated
+	// var terminalAscii, htmlAscii string
+	// if terminalKey, ok := message.Headers["ascii_terminal_key"]; ok {
+	// 	// Get the terminal ASCII from Redis
+	// 	terminalAscii, _ = redisConn.GetWithTracing(ctx, terminalKey)
+	// }
+	// if htmlKey, ok := message.Headers["ascii_html_key"]; ok {
+	// 	// Get the HTML ASCII from Redis
+	// 	htmlAscii, _ = redisConn.GetWithTracing(ctx, htmlKey)
+	// }
+	// Directly publish the results we already have in memory
+	if err := publishResultsToNATS(ctx, message.ID, traceId, terminalAscii, "", htmlAscii, message.Headers); err != nil {
+		span.RecordError(err)
+		logger.Error(ctx, "Failed to publish results to NATS", "error", err)
 	}
 
 	span.SetStatus(codes.Ok, "Message processed successfully")
