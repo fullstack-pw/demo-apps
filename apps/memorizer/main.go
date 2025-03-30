@@ -253,7 +253,7 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 func handleMessage(msg *nats.Msg) {
 	// Extract trace context from message if available
 	parentCtx := context.Background()
-
+	var terminalAscii, htmlAscii string
 	// Try to unmarshal the message to extract headers
 	var message Message
 	if err := json.Unmarshal(msg.Data, &message); err == nil && message.Headers != nil {
@@ -466,24 +466,24 @@ func handleMessage(msg *nats.Msg) {
 	// Extract traceId for correlation
 	traceId := tracing.GetTraceID(ctx)
 
-	// Get any ASCII art that was generated
-	var terminalAscii, htmlAscii string
-	if terminalKey, ok := message.Headers["ascii_terminal_key"]; ok {
-		// Get the terminal ASCII from Redis
-		terminalAscii, _ = redisConn.GetWithTracing(ctx, terminalKey)
-		fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
-		fmt.Printf("terminalKey value: %s", terminalKey)           // DEBUG SESSION
-		fmt.Printf("terminalKey lenght: %d", len(terminalKey))     // DEBUG SESSION
-		fmt.Printf("terminalAscii value: %s", terminalAscii)       // DEBUG SESSION
-		fmt.Printf("terminalAscii lenght: %d", len(terminalAscii)) // DEBUG SESSION
-		fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
-	}
-	if htmlKey, ok := message.Headers["ascii_html_key"]; ok {
-		// Get the HTML ASCII from Redis
-		htmlAscii, _ = redisConn.GetWithTracing(ctx, htmlKey)
-	}
+	// // Get any ASCII art that was generated
+	// var terminalAscii, htmlAscii string
+	// if terminalKey, ok := message.Headers["ascii_terminal_key"]; ok {
+	// 	// Get the terminal ASCII from Redis
+	// 	terminalAscii, _ = redisConn.GetWithTracing(ctx, terminalKey)
+	// 	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
+	// 	fmt.Printf("terminalKey value: %s", terminalKey)           // DEBUG SESSION
+	// 	fmt.Printf("terminalKey lenght: %d", len(terminalKey))     // DEBUG SESSION
+	// 	fmt.Printf("terminalAscii value: %s", terminalAscii)       // DEBUG SESSION
+	// 	fmt.Printf("terminalAscii lenght: %d", len(terminalAscii)) // DEBUG SESSION
+	// 	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
+	// }
+	// if htmlKey, ok := message.Headers["ascii_html_key"]; ok {
+	// 	// Get the HTML ASCII from Redis
+	// 	htmlAscii, _ = redisConn.GetWithTracing(ctx, htmlKey)
+	// }
 
-	// Publish results back to NATS
+	// Directly publish the results we already have in memory
 	if err := publishResultsToNATS(ctx, message.ID, traceId, terminalAscii, "", htmlAscii, message.Headers); err != nil {
 		span.RecordError(err)
 		logger.Error(ctx, "Failed to publish results to NATS", "error", err)
