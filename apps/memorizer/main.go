@@ -299,7 +299,7 @@ func handleMessage(msg *nats.Msg) {
 				baseFilename := strings.TrimSuffix(message.Headers["image_path"], filepath.Ext(message.Headers["image_path"]))
 
 				// 1. Terminal mode (original functionality)
-				terminalAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "terminal", "--columns", "80")
+				terminalAscii, err = executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "terminal", "--columns", "80")
 				if err != nil {
 					logger.Error(ctx, "Failed to convert image to terminal ASCII art",
 						"error", err,
