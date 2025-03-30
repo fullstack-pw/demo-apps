@@ -210,10 +210,6 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 
 	// Create response queue name with environment prefix
 	responseQueue := fmt.Sprintf("%s.result-queue", env)
-	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
-	fmt.Printf("ascii_html value: %s\n", asciiHTML)            // DEBUG SESSION
-	fmt.Printf("ascii_html lenght: %d\n", len(asciiHTML))      // DEBUG SESSION
-	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
 
 	// Create response payload
 	response := map[string]interface{}{
@@ -232,12 +228,6 @@ func publishResultsToNATS(ctx context.Context, messageId string, traceId string,
 		return fmt.Errorf("failed to marshal response: %w", err)
 	}
 
-	logger.Info(ctx, "Publishing results to NATS", // DEBUG SESSION
-		"queue", responseQueue, // DEBUG SESSION
-		"message_id", messageId, // DEBUG SESSION
-		"trace_id", traceId, // DEBUG SESSION
-		"ascii_terminal_length", len(asciiTerminal), // DEBUG SESSION
-		"ascii_html_length", len(asciiHTML)) // DEBUG SESSION
 	// Publish to NATS
 	err = natsConn.PublishWithTracing(ctx, responseQueue, responseData)
 	if err != nil {

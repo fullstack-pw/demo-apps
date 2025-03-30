@@ -142,10 +142,6 @@ func handleResultMessage(msg *nats.Msg) {
 		logger.Error(parentCtx, "Failed to parse result message", "error", err)
 		return
 	}
-	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
-	fmt.Printf("response value: %s\n", response)               // DEBUG SESSION
-	fmt.Printf("response lenght: %d\n", len(response))         // DEBUG SESSION
-	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
 	// Get trace ID from the response
 	traceID, ok := response["trace_id"].(string)
 	if !ok || traceID == "" {
@@ -295,21 +291,7 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	result, err := responseCache.GetWithTimeout(traceID, timeout)
 	if err != nil {
 		logger.Warn(ctx, "Timed out waiting for ASCII results", "error", err)
-		// Continue without ASCII results
 	} else {
-		// Extract ASCII results
-		logger.Info(ctx, "Response from result queue", "result", fmt.Sprintf("%+v", result)) // DEBUG SESSION
-		if terminal, ok := result["ascii_terminal"].(string); ok {                           // DEBUG SESSION
-			logger.Info(ctx, "ASCII terminal from result", "length", len(terminal), "first_chars", terminal[:min(20, len(terminal))]) // DEBUG SESSION
-		} else { // DEBUG SESSION
-			logger.Info(ctx, "ASCII terminal not found in result or not a string") // DEBUG SESSION
-		} // DEBUG SESSION
-		if html, ok := result["ascii_html"].(string); ok { // DEBUG SESSION
-			logger.Info(ctx, "ASCII HTML from result", "length", len(html), "first_chars", html[:min(20, len(html))]) // DEBUG SESSION
-		} else { // DEBUG SESSION
-			logger.Info(ctx, "ASCII HTML not found in result or not a string") // DEBUG SESSION
-		} // DEBUG SESSION
-
 		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
 	}
 
@@ -600,7 +582,6 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 		logger.Debug(ctx, "Found base64 images", "count", len(elements))
 		if len(elements) > 0 {
 			for i, el := range elements {
-				// DEBUGGING SESSION
 				src, _ := el.Attribute("src")
 				alt, _ := el.Attribute("alt")
 				height, _ := el.Attribute("height")
@@ -657,7 +638,6 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 					"class", classValue,
 					"id", idValue,
 					"html", html)
-				// DEBUGGING
 
 				logger.Debug(ctx, "Clicking on image to open full-size view")
 				err = rod.Try(func() {
