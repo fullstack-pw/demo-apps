@@ -142,7 +142,10 @@ func handleResultMessage(msg *nats.Msg) {
 		logger.Error(parentCtx, "Failed to parse result message", "error", err)
 		return
 	}
-
+	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
+	fmt.Printf("response value: %s\n", response)               // DEBUG SESSION
+	fmt.Printf("response lenght: %d\n", len(response))         // DEBUG SESSION
+	fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
 	// Get trace ID from the response
 	traceID, ok := response["trace_id"].(string)
 	if !ok || traceID == "" {
@@ -150,17 +153,6 @@ func handleResultMessage(msg *nats.Msg) {
 		return
 	}
 
-	if terminal, ok := response["ascii_terminal"].(string); ok { //DEBUG SESSION
-		logger.Debug(parentCtx, "Received ASCII terminal", "trace_id", traceID, "length", len(terminal)) //DEBUG SESSION
-	} else { //DEBUG SESSION
-		logger.Debug(parentCtx, "No ASCII terminal in response", "trace_id", traceID) //DEBUG SESSION
-	} //DEBUG SESSION
-
-	if html, ok := response["ascii_html"].(string); ok { //DEBUG SESSION
-		logger.Debug(parentCtx, "Received ASCII HTML", "trace_id", traceID, "length", len(html)) //DEBUG SESSION
-	} else { //DEBUG SESSION
-		logger.Debug(parentCtx, "No ASCII HTML in response", "trace_id", traceID) //DEBUG SESSION
-	} //DEBUG SESSION
 	// Create context with trace ID for logging
 	ctx := context.Background()
 	logger.Info(ctx, "Received result message", "trace_id", traceID, "subject", msg.Subject)
