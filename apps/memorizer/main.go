@@ -471,6 +471,12 @@ func handleMessage(msg *nats.Msg) {
 	if terminalKey, ok := message.Headers["ascii_terminal_key"]; ok {
 		// Get the terminal ASCII from Redis
 		terminalAscii, _ = redisConn.GetWithTracing(ctx, terminalKey)
+		fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
+		fmt.Printf("terminalKey value: %s", terminalKey)           // DEBUG SESSION
+		fmt.Printf("terminalKey lenght: %d", len(terminalKey))     // DEBUG SESSION
+		fmt.Printf("terminalAscii value: %s", terminalAscii)       // DEBUG SESSION
+		fmt.Printf("terminalAscii lenght: %d", len(terminalAscii)) // DEBUG SESSION
+		fmt.Println("################################ DEBUG HERE") // DEBUG SESSION
 	}
 	if htmlKey, ok := message.Headers["ascii_html_key"]; ok {
 		// Get the HTML ASCII from Redis
