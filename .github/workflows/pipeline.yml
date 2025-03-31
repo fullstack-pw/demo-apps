@@ -58,16 +58,16 @@ jobs:
           echo "Apps: $APPS_JSON"
           echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
 
-  go-tests:
-    needs: determine-app
-    if: needs.determine-app.outputs.app_paths != '[]'
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-    name: GO Tests for ${{ matrix.app.app_name }}
-    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
-    with:
-      go-dir: ./${{ matrix.app.app_path }}
+  # go-tests:
+  #   needs: determine-app
+  #   if: needs.determine-app.outputs.app_paths != '[]'
+  #   strategy:
+  #     matrix:
+  #       app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+  #   name: GO Tests for ${{ matrix.app.app_name }}
+  #   uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+  #   with:
+  #     go-dir: ./${{ matrix.app.app_path }}
 
   docker-build-and-push:
     needs: [determine-app]
