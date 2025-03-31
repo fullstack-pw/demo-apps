@@ -15,8 +15,8 @@ module.exports = defineConfig({
                 // Reset test state in all services
                 resetTestState: async () => {
                     try {
-                        // This is a placeholder. In reality, you might need to implement
-                        // specific cleanup logic for your services
+                        // TODO This is a placeholder. Need to implement
+                        // specific cleanup logic for services
                         console.log(`Resetting test state...`);
                         return true;
                     } catch (error) {
@@ -27,13 +27,13 @@ module.exports = defineConfig({
 
                 // Task to simulate service restart (used in writer.cy.js)
                 simulateServiceRestart: async ({ service }) => {
-                    // In a real environment, this might connect to your k8s API 
+                    // In a real environment, this might connect to k8s API 
                     // or call a specific endpoint to trigger a restart
                     console.log(`Simulating restart of ${service} service`);
 
-                    // Mock implementation - in real use you'd implement actual restart logic
+                    // TODO Mock implementation - in real use implement actual restart logic
                     try {
-                        // Placeholder - in reality you might call a restart API
+                        // TODO Placeholder - call a restart API
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         console.log(`${service} service restarted`);
                         return true;
@@ -54,8 +54,8 @@ module.exports = defineConfig({
                 // Query OpenTelemetry collector for traces
                 queryTraces: async ({ traceId }) => {
                     try {
-                        // This is a placeholder. You would implement this to query your 
-                        // actual tracing backend (Jaeger, etc.)
+                        // TODO This is a placeholder. Need to implement this to query 
+                        // actual tracing backend (Jaeger)
                         console.log(`Querying for trace ID: ${traceId}`);
                         // Mock response
                         return {

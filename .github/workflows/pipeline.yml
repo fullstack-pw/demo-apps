@@ -95,20 +95,18 @@ jobs:
       context: "dev"
       app-name: ${{ matrix.app.app_name }}
 
-  # dev-cypress-tests:
-  #   needs: dev-deploy
-  #   name: DEV cypress
-  #   uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-  #   with:
-  #     start: npm run cypress:dev
-  #     env-vars: |
-  #       {
-  #         "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
-  #         "WRITER_URL": "https://dev.writer.fullstack.pw",
-  #         "MEMORIZER_URL": "https://dev.memorizer.fullstack.pw",
-  #         "ENVIRONMENT": "dev",
-  #         "TEST_RETRIES": "2"
-  #       }
+  dev-cypress-tests:
+    needs: dev-deploy
+    name: DEV cypress
+    uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+    with:
+      start: npm run cypress:dev
+      env-vars: |
+        {
+          "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
+          "ENVIRONMENT": "dev",
+          "TEST_RETRIES": "2"
+        }
 
   # stg-deploy:
   #   needs: [determine-app, dev-cypress-tests]
