@@ -243,14 +243,14 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Search Bing Images for the content
-	imageURL, err := searchBingImages(ctx, msg.Content)
+	imageURL, err := searchGoogleImages(ctx, msg.Content)
 	if err != nil {
-		logger.Error(ctx, "Failed to search Bing Images", "error", err)
-		http.Error(w, fmt.Sprintf("Failed to search Bing Images: %v", err), http.StatusInternalServerError)
-		imageURL, err = searchGoogleImages(ctx, msg.Content)
+		logger.Error(ctx, "Failed to search Google Images", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to search Google Images: %v", err), http.StatusInternalServerError)
+		imageURL, err = searchBingImages(ctx, msg.Content)
 		if err != nil {
-			logger.Error(ctx, "Failed to search Google Images", "error", err)
-			http.Error(w, fmt.Sprintf("Failed to search Google Images: %v", err), http.StatusInternalServerError)
+			logger.Error(ctx, "Failed to search Bing Images", "error", err)
+			http.Error(w, fmt.Sprintf("Failed to search Bing Images: %v", err), http.StatusInternalServerError)
 			return
 		}
 	}
