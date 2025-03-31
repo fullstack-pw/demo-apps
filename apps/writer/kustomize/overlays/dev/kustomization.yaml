@@ -12,3 +12,14 @@ patches:
     target:
       kind: Deployment
       name: writer
+  - patch: |-
+      - op: replace
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxSurge: 100%
+            maxUnavailable: 50%
+    target:
+      kind: Deployment
+      name: writer
