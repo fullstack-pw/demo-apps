@@ -57,13 +57,6 @@ var responseCache = ResponseCache{
 	signals: make(map[string]chan struct{}),
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Add response to cache
 func (rc *ResponseCache) Add(traceID string, response map[string]interface{}) {
 	rc.mu.Lock()
