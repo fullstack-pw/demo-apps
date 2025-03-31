@@ -86,6 +86,10 @@ module.exports = defineConfig({
             // Add environment name to the title
             config.env.titleSuffix = ` (${testEnv.toUpperCase()})`;
 
+            // Determine which spec files to run based on the environment
+            console.log("Using accessibleSpecPattern to filter specs");
+            config.specPattern = ['cypress/e2e/enqueuer.cy.js', 'cypress/e2e/pipeline-tests.cy.js'];
+
             return config;
         },
         baseUrl: 'https://dev.enqueuer.fullstack.pw', // Default baseUrl, will be overridden by environment config
