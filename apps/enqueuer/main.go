@@ -529,6 +529,13 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 
 	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
 
+	err = rod.Try(func() { // DEBUG SESSION
+		page.MustScreenshot("before_consent.png")                          // DEBUG SESSION
+		logger.Info(ctx, "Took screenshot before handling consent dialog") // DEBUG SESSION
+	}) // DEBUG SESSION
+	if err != nil { // DEBUG SESSION
+		logger.Error(ctx, "Failed to take before_consent screenshot", "error", fmt.Sprintf("%v", err)) // DEBUG SESSION
+	} // DEBUG SESSION
 	// Wait for page to stabilize
 	err = rod.Try(func() {
 		err = page.WaitStable(2 * time.Second)
