@@ -119,9 +119,9 @@ module.exports = defineConfig({
         WRITER_URL: 'https://dev.writer.fullstack.pw',
     },
     experimentalStudio: false,  // Enable/disable Cypress Studio
-    video: true,
+    video: false,
     videosFolder: 'cypress/videos',
     videoCompression: 32,
-    screenshotOnRunFailure: true,
+    screenshotOnRunFailure: false,
     trashAssetsBeforeRuns: true,
 });
