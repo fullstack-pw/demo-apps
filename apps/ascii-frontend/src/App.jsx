@@ -51,10 +51,10 @@ function App() {
       const isDevEnv = hostname.startsWith('dev.');
       const isStgEnv = hostname.startsWith('stg.');
       const env = isDevEnv ? 'dev' : isStgEnv ? 'stg' : 'prod';
-      
+
       // Construct the enqueuer URL based on environment
-      const enqueuerUrl = `https://${env}.enqueuer.fullstack.pw/add`;
-      
+      const enqueuerUrl = `https://${env}.enqueuer.fullstack.pw/add?queue=queue-${env}`;
+
       const response = await fetch(enqueuerUrl, {
         method: 'POST',
         headers: {
@@ -84,11 +84,11 @@ function App() {
 
   const copyToClipboard = () => {
     if (!result) return;
-    
-    const textToCopy = selectedView === 'html' 
-      ? result.image_ascii_html 
+
+    const textToCopy = selectedView === 'html'
+      ? result.image_ascii_html
       : result.image_ascii_text;
-    
+
     navigator.clipboard.writeText(textToCopy)
       .then(() => {
         setCopied(true);
@@ -101,15 +101,15 @@ function App() {
 
   const downloadAscii = () => {
     if (!result) return;
-    
-    const content = selectedView === 'html' 
-      ? result.image_ascii_html 
+
+    const content = selectedView === 'html'
+      ? result.image_ascii_html
       : result.image_ascii_text;
     const fileType = selectedView === 'html' ? 'html' : 'txt';
     const filename = `ascii-art-${Date.now()}.${fileType}`;
-    
+
     const element = document.createElement('a');
-    const file = new Blob([content], {type: selectedView === 'html' ? 'text/html' : 'text/plain'});
+    const file = new Blob([content], { type: selectedView === 'html' ? 'text/html' : 'text/plain' });
     element.href = URL.createObjectURL(file);
     element.download = filename;
     document.body.appendChild(element);
@@ -389,9 +389,9 @@ function App() {
               <div style={styles.imageSection}>
                 <h3 style={styles.imageTitle}>Source Image</h3>
                 <div style={styles.imageContainer}>
-                  <img 
-                    src={result.image_url} 
-                    alt="Source for ASCII art" 
+                  <img
+                    src={result.image_url}
+                    alt="Source for ASCII art"
                     style={styles.image}
                   />
                 </div>
