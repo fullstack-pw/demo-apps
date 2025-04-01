@@ -4,16 +4,16 @@ FROM node:20-alpine as build
 WORKDIR /app
 
 # Copy package files first for better layer caching
-COPY package.json ./
+COPY ascii-frontend/package.json ./
 
 # Install dependencies using npm install
 RUN npm install
 
 # Copy all necessary files in the correct structure
-COPY index.html ./
-COPY vite.config.js ./
-COPY public ./public
-COPY src ./src
+COPY ascii-frontend/index.html ./
+COPY ascii-frontend/vite.config.js ./
+COPY ascii-frontend/public ./public
+COPY ascii-frontend/src ./src
 
 # Build the application
 RUN npm run build
