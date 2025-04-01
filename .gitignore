@@ -6,3 +6,4 @@ cypress/downloads/
 .cypress-cache/
 node_modules/
 mochawesome*
+dist
