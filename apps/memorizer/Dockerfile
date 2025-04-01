@@ -1,41 +1,56 @@
-FROM golang:1.23.1
+# Build stage for Go application
+FROM golang:1.23.1-alpine AS go-builder
 
-# Install Python and required packages for ASCII art conversion
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
+# Install build dependencies
+RUN apk add --no-cache git
+
+WORKDIR /build
+
+# Copy go.mod and go.sum files first for better layer caching
+COPY shared/go.mod shared/go.sum ./shared/
+COPY memorizer/go.mod memorizer/go.sum ./memorizer/
+
+# Download dependencies (will be cached if go.mod/sum don't change)
+WORKDIR /build/memorizer
+RUN go mod download
+
+# Copy shared module
+WORKDIR /build
+COPY shared ./shared
+
+# Copy memorizer application code
+COPY memorizer/main.go ./memorizer/
+
+# Build the application
+WORKDIR /build/memorizer
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+
+# Runtime stage with Python for ASCII art conversion
+FROM python:3.11-slim
+
+# Install only required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-venv \
-    python3-full \
     && rm -rf /var/lib/apt/lists/*
 
-# Create a virtual environment and install the ASCII art packages
+# Set up virtual environment
 RUN python3 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install the ascii_magic Python package in the virtual environment
-RUN pip install ascii_magic pillow
+# Install Python packages in a single layer
+RUN pip install --no-cache-dir \
+    ascii_magic \
+    pillow
 
 WORKDIR /app
-
-# Copy shared module first
-COPY shared ./shared
-
-# Copy memorizer app files
-COPY memorizer/main.go memorizer/go.mod memorizer/go.sum ./memorizer/
-
-# Change to memorizer directory
-WORKDIR /app/memorizer
-
-# Download dependencies
-RUN go mod tidy
-
-# Build the application
-RUN go build -o main .
 
 # Create scripts directory for the ASCII converter
 RUN mkdir -p scripts
 
-# Expose port 8080
+# Copy the compiled application from builder stage
+COPY --from=go-builder /build/memorizer/main .
+
+# Expose port
 EXPOSE 8080
 
 # Run the application

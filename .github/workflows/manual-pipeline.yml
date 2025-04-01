@@ -1,0 +1,154 @@
+name: Manual Multi-App CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_target:
+        description: "Environment(s) to deploy to"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - "dev"
+          - "dev,stg"
+          - "dev,stg,prod"
+          - "stg"
+          - "stg,prod"
+          - "prod"
+      specific_app:
+        description: "Specific app to deploy (leave empty for all)"
+        required: false
+        type: string
+      run_tests:
+        description: "Run Cypress tests after deployment"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  determine-app:
+    runs-on: self-hosted
+    outputs:
+      apps: ${{ steps.find-apps.outputs.apps }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Find apps to deploy
+        id: find-apps
+        run: |
+          SPECIFIC_APP="${{ github.event.inputs.specific_app }}"
+
+          if [[ -n "$SPECIFIC_APP" ]]; then
+            # Deploy specific app if provided
+            if [[ -d "apps/$SPECIFIC_APP" ]]; then
+              APPS=("[{\"app_path\": \"apps/$SPECIFIC_APP\", \"app_name\": \"$SPECIFIC_APP\"}]")
+              echo "Deploying specific app: $SPECIFIC_APP"
+            else
+              echo "Error: App '$SPECIFIC_APP' not found!"
+              APPS="[]"
+            fi
+          else
+            # Find all apps in the apps directory (excluding shared)
+            APPS=()
+            
+            for APP_DIR in apps/*; do
+              if [[ -d "$APP_DIR" && "$APP_DIR" != "apps/shared" ]]; then
+                APP_NAME=$(basename "$APP_DIR")
+                APPS+=("{\"app_path\": \"apps/$APP_NAME\", \"app_name\": \"$APP_NAME\"}")
+              fi
+            done
+            
+            # Format as JSON array for GitHub Actions
+            APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
+            echo "Found apps: $APPS_JSON"
+          fi
+
+          echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
+
+  docker-build-and-push:
+    needs: [determine-app]
+    if: needs.determine-app.outputs.apps != '[]'
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: Build and Push ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
+    with:
+      app-context: "./apps"
+      app-name: "${{ matrix.app.app_name }}"
+      app-dockerfile: "./apps/${{ matrix.app.app_name }}/Dockerfile"
+
+  dev-deploy:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'dev')
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: DEV deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/dev"
+      context: "dev"
+      app-name: ${{ matrix.app.app_name }}
+
+  dev-cypress-tests:
+    needs: dev-deploy
+    if: github.event.inputs.run_tests == 'true' && contains(github.event.inputs.deploy_target, 'dev')
+    name: DEV cypress
+    uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+    with:
+      start: npm run cypress:dev
+      env-vars: |
+        {
+          "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
+          "WRITER_URL": "https://dev.writer.fullstack.pw",
+          "MEMORIZER_URL": "https://dev.memorizer.fullstack.pw",
+          "ENVIRONMENT": "dev",
+          "TEST_RETRIES": "2"
+        }
+
+  stg-deploy:
+    needs: [determine-app, docker-build-and-push, dev-cypress-tests]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'stg') && (needs.dev-cypress-tests.result == 'success' || github.event.inputs.run_tests != 'true' || !contains(github.event.inputs.deploy_target, 'dev'))
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: STG deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
+      context: "stg"
+      app-name: ${{ matrix.app.app_name }}
+
+  stg-cypress-tests:
+    needs: stg-deploy
+    if: github.event.inputs.run_tests == 'true' && contains(github.event.inputs.deploy_target, 'stg')
+    name: STG cypress
+    uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+    with:
+      start: npm run cypress:stg
+      env-vars: |
+        {
+          "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
+          "WRITER_URL": "https://stg.writer.fullstack.pw",
+          "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
+          "ENVIRONMENT": "stg",
+          "TEST_RETRIES": "2"
+        }
+
+  prod-deploy:
+    needs: [determine-app, stg-cypress-tests]
+    if: needs.determine-app.outputs.apps != '[]' && contains(github.event.inputs.deploy_target, 'prod') && (needs.stg-cypress-tests.result == 'success' || github.event.inputs.run_tests != 'true' || !contains(github.event.inputs.deploy_target, 'stg'))
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: PROD deploy ${{ matrix.app.app_name }}
+    uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+    with:
+      kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
+      context: "prod"
+      app-name: ${{ matrix.app.app_name }}

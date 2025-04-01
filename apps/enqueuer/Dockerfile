@@ -1,57 +1,55 @@
-# Update the Dockerfile for enqueuer
-FROM golang:1.23.1
+# Build stage
+FROM golang:1.23.1-alpine AS builder
 
-# Install Chrome dependencies
-RUN apt-get update && apt-get install -y \
-    wget \
-    gnupg \
+# Install build dependencies
+RUN apk add --no-cache git
+
+WORKDIR /build
+
+# Copy go.mod and go.sum files first for better layer caching
+COPY shared/go.mod shared/go.sum ./shared/
+COPY enqueuer/go.mod enqueuer/go.sum ./enqueuer/
+
+# Download dependencies (will be cached if go.mod/sum don't change)
+WORKDIR /build/enqueuer
+RUN go mod download
+
+# Copy shared module
+WORKDIR /build
+COPY shared ./shared
+
+# Copy enqueuer application code
+COPY enqueuer/main.go ./enqueuer/
+
+# Build the application
+WORKDIR /build/enqueuer
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
+
+# Runtime stage with Chrome
+FROM alpine:3.19
+
+# Install Chrome and dependencies with minimal layers
+RUN apk update && apk add --no-cache \
+    chromium \
+    nss \
+    freetype \
+    freetype-dev \
+    harfbuzz \
     ca-certificates \
-    fonts-liberation \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libatspi2.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libdrm2 \
-    libgbm1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxfixes3 \
-    libxkbcommon0 \
-    libxrandr2 \
-    xdg-utils \
-    --no-install-recommends
+    ttf-freefont \
+    && rm -rf /var/cache/apk/*
 
-# Install Chrome
-RUN wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
-    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list \
-    && apt-get update \
-    && apt-get install -y google-chrome-stable --no-install-recommends \
-    && rm -rf /var/lib/apt/lists/*
+# Set environment variables for Chrome
+ENV CHROME_PATH=/usr/bin/chromium-browser \
+    CHROME_BIN=/usr/bin/chromium-browser
+
+# Copy the compiled application from builder stage
+COPY --from=builder /build/enqueuer/main /app/main
 
 WORKDIR /app
 
-COPY shared ./shared
-
-COPY enqueuer/main.go enqueuer/go.mod enqueuer/go.sum ./enqueuer/
-
-WORKDIR /app/enqueuer
-
-# Download dependencies
-RUN go mod tidy
-
-# Build the application
-RUN go build -o main .
-
-# Expose port 8080
+# Expose port
 EXPOSE 8080
-
-# Tell Rod where to find Chrome
-ENV CHROME_PATH=/usr/bin/google-chrome
 
 # Run the application
 CMD ["./main"]
