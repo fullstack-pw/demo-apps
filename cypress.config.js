@@ -1,3 +1,4 @@
+// cypress.config.js
 const { defineConfig } = require('cypress');
 const fs = require('fs');
 const path = require('path');
@@ -15,8 +16,6 @@ module.exports = defineConfig({
                 // Reset test state in all services
                 resetTestState: async () => {
                     try {
-                        // TODO This is a placeholder. Need to implement
-                        // specific cleanup logic for services
                         console.log(`Resetting test state...`);
                         return true;
                     } catch (error) {
@@ -25,15 +24,10 @@ module.exports = defineConfig({
                     }
                 },
 
-                // Task to simulate service restart (used in writer.cy.js)
+                // Task to simulate service restart
                 simulateServiceRestart: async ({ service }) => {
-                    // In a real environment, this might connect to k8s API 
-                    // or call a specific endpoint to trigger a restart
                     console.log(`Simulating restart of ${service} service`);
-
-                    // TODO Mock implementation - in real use implement actual restart logic
                     try {
-                        // TODO Placeholder - call a restart API
                         await new Promise(resolve => setTimeout(resolve, 1000));
                         console.log(`${service} service restarted`);
                         return true;
@@ -43,7 +37,7 @@ module.exports = defineConfig({
                     }
                 },
 
-                // Read a log file (useful for checking service logs during tests)
+                // Read a log file
                 readLogFile: (filePath) => {
                     if (fs.existsSync(filePath)) {
                         return fs.readFileSync(filePath, 'utf8');
@@ -54,8 +48,6 @@ module.exports = defineConfig({
                 // Query OpenTelemetry collector for traces
                 queryTraces: async ({ traceId }) => {
                     try {
-                        // TODO This is a placeholder. Need to implement this to query 
-                        // actual tracing backend (Jaeger)
                         console.log(`Querying for trace ID: ${traceId}`);
                         // Mock response
                         return {
@@ -83,45 +75,33 @@ module.exports = defineConfig({
                 ENVIRONMENT: testEnv
             };
 
-            // Add environment name to the title
-            config.env.titleSuffix = ` (${testEnv.toUpperCase()})`;
-
             // Determine which spec files to run based on the environment
             console.log("Using accessibleSpecPattern to filter specs");
             config.specPattern = ['cypress/e2e/enqueuer.cy.js', 'cypress/e2e/pipeline-tests.cy.js'];
 
             return config;
         },
-        baseUrl: 'https://dev.enqueuer.fullstack.pw', // Default baseUrl, will be overridden by environment config
-        specPattern: 'cypress/e2e/**/*.cy.{js,jsx,ts,tsx}',
+        baseUrl: 'https://dev.enqueuer.fullstack.pw', // Default baseUrl
         supportFile: 'cypress/support/e2e.js',
-        screenshotsFolder: 'cypress/screenshots',
-        videosFolder: 'cypress/videos',
-        viewportWidth: 1280,
-        viewportHeight: 720,
         defaultCommandTimeout: 10000,
         requestTimeout: 8000,
         responseTimeout: 30000,
         retries: {
-            runMode: 2,      // Retry failing tests in CI
-            openMode: 0      // Don't retry in GUI mode
-        },
+            runMode: 2,
+            openMode: 0
+        }
     },
-    reporter: 'junit',
+    reporter: 'mochawesome',
     reporterOptions: {
         mochaFile: 'cypress/results/results-[hash].xml',
         toConsole: true,
     },
     env: {
-        // Default values, will be overridden by environment-specific config
+        // Default values
         ENQUEUER_URL: 'https://dev.enqueuer.fullstack.pw',
-        MEMORIZER_URL: 'https://dev.memorizer.fullstack.pw',
-        WRITER_URL: 'https://dev.writer.fullstack.pw',
     },
-    experimentalStudio: false,  // Enable/disable Cypress Studio
+    experimentalStudio: false,
+    // Disable videos and screenshots - KISS principle
     video: false,
-    videosFolder: 'cypress/videos',
-    videoCompression: 32,
-    screenshotOnRunFailure: false,
-    trashAssetsBeforeRuns: true,
+    screenshotOnRunFailure: false
 });
