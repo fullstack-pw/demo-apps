@@ -120,7 +120,7 @@ func (rc *ResponseCache) GetWithTimeout(traceID string, timeout time.Duration) (
 
 // Clean up expired entries (should be called periodically)
 func (rc *ResponseCache) CleanExpired(maxAge time.Duration) {
-	// Implementation would depend on when entries were added, we could add timestamps
+	// TODO Implementation would depend on when entries were added, we could add timestamps
 	// For now, we'll skip this as we're cleaning up after retrieval
 }
 

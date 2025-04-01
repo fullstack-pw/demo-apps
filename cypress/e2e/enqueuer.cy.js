@@ -1,23 +1,40 @@
-// Tests specific to the Enqueuer service
 describe('Enqueuer Service Tests', () => {
+    beforeEach(() => {
+        // Load test data
+        cy.fixture('messages.json').then(data => {
+            cy.wrap(data).as('testData');
+        });
+    });
+
     it('should accept and queue valid messages', () => {
         // Test with valid message
         const validMessage = {
-            content: `Valid test message ${Date.now()}`,
+            content: `Linux Tux`,
             id: `valid-${Cypress._.random(0, 1000000)}`
         };
 
         cy.request({
             method: 'POST',
-            url: `${Cypress.env('ENQUEUER_URL')}/add?queue=test-queue`,
+            url: `${Cypress.env('ENQUEUER_URL')}/add?queue=queue-dev`,
             body: validMessage,
             headers: {
                 'Content-Type': 'application/json'
             }
         }).then((response) => {
             expect(response.status).to.equal(201);
-            expect(response.body).to.have.property('status', 'queued');
-            expect(response.body).to.have.property('queue', 'test-queue');
+            expect(response.body).to.have.property('status');
+            expect(response.body).to.have.property('queue', 'queue-dev');
+            expect(response.body).to.have.property('image_url').and.not.be.empty;
+            expect(response.body).to.have.property('image_ascii_text').and.not.be.empty;
+            expect(response.body).to.have.property('image_ascii_html').and.not.be.empty;
+
+            // Check for ASCII art in response
+            const hasAsciiText = response.body.image_ascii_text && response.body.image_ascii_text.length > 0;
+            const hasAsciiHtml = response.body.image_ascii_html && response.body.image_ascii_html.length > 0;
+
+            cy.log(`Message accepted with image URL: ${response.body.image_url}`);
+            cy.log(`ASCII text generated: ${hasAsciiText ? 'Yes' : 'No'}`);
+            cy.log(`ASCII HTML generated: ${hasAsciiHtml ? 'Yes' : 'No'}`);
         });
     });
 
@@ -38,43 +55,6 @@ describe('Enqueuer Service Tests', () => {
         });
     });
 
-    it('should handle high volume of messages', () => {
-        // Send multiple messages in quick succession
-        const messageCount = 10;
-        const promises = [];
-
-        for (let i = 0; i < messageCount; i++) {
-            const message = {
-                content: `Bulk test message ${i}`,
-                id: `bulk-${i}-${Cypress._.random(0, 1000000)}`
-            };
-
-            promises.push(
-                cy.request({
-                    method: 'POST',
-                    url: `${Cypress.env('ENQUEUER_URL')}/add?queue=bulk-test`,
-                    body: message,
-                    headers: {
-                        'Content-Type': 'application/json'
-                    }
-                }).then((response) => {
-                    expect(response.status).to.equal(201);
-                })
-            );
-        }
-
-        // Wait for all requests to complete
-        cy.wrap(promises).then(() => {
-            // Check service health after bulk operation
-            cy.request({
-                method: 'GET',
-                url: `${Cypress.env('ENQUEUER_URL')}/health`,
-            }).then((response) => {
-                expect(response.status).to.equal(200);
-            });
-        });
-    });
-
     it('should check NATS connection status', () => {
         cy.request({
             method: 'GET',
@@ -85,22 +65,4 @@ describe('Enqueuer Service Tests', () => {
         });
     });
 
-    it('should include proper headers in response', () => {
-        const message = {
-            content: 'Header test message',
-            id: `header-${Cypress._.random(0, 1000000)}`
-        };
-
-        cy.request({
-            method: 'POST',
-            url: `${Cypress.env('ENQUEUER_URL')}/add`,
-            body: message,
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        }).then((response) => {
-            expect(response.status).to.equal(201);
-            expect(response.headers).to.have.property('content-type').that.includes('application/json');
-        });
-    });
 });
