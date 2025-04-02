@@ -40,13 +40,76 @@ type Message struct {
 
 // Global variables
 var (
-	natsConn     *connections.NATSConnection
-	logger       *logging.Logger
-	tracer       = tracing.GetTracer("enqueuer")
-	browserPool  *rod.PagePool
-	browserMutex sync.Mutex
-	poolSize     = 3 // Configurable pool size
+	natsConn    *connections.NATSConnection
+	logger      *logging.Logger
+	tracer      = tracing.GetTracer("enqueuer")
+	browserPool *PagePool
+	poolSize    = 3 // Configurable pool size
 )
+
+// PagePool manages a pool of Rod browser pages
+type PagePool struct {
+	pages chan *rod.Page
+	mu    sync.Mutex
+	size  int
+}
+
+// NewPagePool creates a new page pool with the specified size
+func NewPagePool(size int) *PagePool {
+	return &PagePool{
+		pages: make(chan *rod.Page, size),
+		size:  size,
+	}
+}
+
+// Get gets a page from the pool or creates a new one using the factory function
+func (p *PagePool) Get(ctx context.Context, create func(ctx context.Context) *rod.Page) *rod.Page {
+	select {
+	case page := <-p.pages:
+		logger.Debug(ctx, "Reusing page from pool", "remaining", len(p.pages))
+		return page
+	default:
+		logger.Debug(ctx, "Creating new page for pool", "size", p.size)
+		return create(ctx)
+	}
+}
+
+// Put returns a page to the pool or closes it if the pool is full
+func (p *PagePool) Put(ctx context.Context, page *rod.Page) {
+	if page == nil {
+		return
+	}
+
+	select {
+	case p.pages <- page:
+		logger.Debug(ctx, "Page returned to pool", "pool_size", len(p.pages))
+	default:
+		logger.Debug(ctx, "Pool full, closing page")
+		err := page.Close()
+		if err != nil {
+			logger.Error(ctx, "Error closing page", "error", err)
+		}
+	}
+}
+
+// Cleanup closes all pages in the pool
+func (p *PagePool) Cleanup(ctx context.Context) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	logger.Info(ctx, "Cleaning up page pool")
+
+	// Close all pages in the pool
+	close(p.pages)
+	for page := range p.pages {
+		if page != nil {
+			err := page.Close()
+			if err != nil {
+				logger.Error(ctx, "Error closing page during cleanup", "error", err)
+			}
+		}
+	}
+}
 
 // BrowserConfig holds configuration for browser instances
 type BrowserConfig struct {
@@ -58,11 +121,8 @@ type BrowserConfig struct {
 }
 
 // createBrowserPage creates a new browser page for the pool
-func createBrowserPage(config BrowserConfig) *rod.Page {
-	browserMutex.Lock()
-	defer browserMutex.Unlock()
-
-	logger.Debug(context.Background(), "Creating new browser instance")
+func createBrowserPage(ctx context.Context, config BrowserConfig) *rod.Page {
+	logger.Debug(ctx, "Creating new browser instance")
 
 	u, err := launcher.New().
 		Bin(config.ChromePath).
@@ -76,38 +136,38 @@ func createBrowserPage(config BrowserConfig) *rod.Page {
 		Launch()
 
 	if err != nil {
-		logger.Error(context.Background(), "Failed to launch browser", "error", err)
+		logger.Error(ctx, "Failed to launch browser", "error", err)
 		return nil
 	}
 
 	// Create browser instance with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	timeoutCtx, cancel := context.WithTimeout(ctx, config.Timeout)
 	defer cancel()
 
 	browser := rod.New().
 		ControlURL(u).
-		Context(ctx)
+		Context(timeoutCtx)
 
 	err = browser.Connect()
 	if err != nil {
-		logger.Error(context.Background(), "Failed to connect to browser", "error", err)
+		logger.Error(ctx, "Failed to connect to browser", "error", err)
 		return nil
 	}
 
 	// Create incognito page
 	page, err := browser.Incognito()
 	if err != nil {
-		logger.Error(context.Background(), "Failed to create incognito context", "error", err)
+		logger.Error(ctx, "Failed to create incognito context", "error", err)
 		return nil
 	}
 
 	p, err := page.Page(proto.TargetCreateTarget{})
 	if err != nil {
-		logger.Error(context.Background(), "Failed to create page", "error", err)
+		logger.Error(ctx, "Failed to create page", "error", err)
 		return nil
 	}
 
-	logger.Debug(context.Background(), "Browser instance created successfully")
+	logger.Debug(ctx, "Browser instance created successfully")
 	return p
 }
 
@@ -710,94 +770,9 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	return imgURL, nil
 }
 
-func searchGoogleImages(ctx context.Context, query string) (string, error) {
-	// Create a span for tracing
-	ctx, span := tracer.Start(ctx, "google.image_search", trace.WithAttributes(
-		attribute.String("search.query", query),
-	))
-	defer span.End()
-
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/google-chrome" // Default path for our container
-	}
-
-	logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
-
-	// Use a very basic approach - create a launcher with just essential flags
-	logger.Info(ctx, "Creating Chrome launcher")
-	u, err := launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "").
-		Launch()
-
-	if err != nil {
-		logger.Error(ctx, "Failed to launch Chrome", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Chrome launched successfully", "control_url", u)
-
-	// Create browser instance
-	browser := rod.New().
-		ControlURL(u).
-		Timeout(30 * time.Second)
-
-	err = browser.Connect()
-	if err != nil {
-		logger.Error(ctx, "Failed to connect to Chrome", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully connected to browser")
-	defer browser.Close()
-
-	// Create page
-	var page *rod.Page
-	err = rod.Try(func() {
-		page = browser.MustPage()
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to create page", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Page created successfully")
-
-	// Navigate to Google Images search
-	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
-	logger.Info(ctx, "Navigating to search URL", "url", searchURL)
-
-	err = rod.Try(func() {
-		page.MustNavigate(searchURL)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to navigate to URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
-
-	// Wait for page to stabilize
-	err = rod.Try(func() {
-		err = page.WaitStable(2 * time.Second)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to wait for page stability", "error", fmt.Sprintf("%v", err))
-	}
-
-	// Try to handle cookie consent dialogs
+// handleConsentDialogs attempts to click on cookie consent buttons
+func handleConsentDialogs(ctx context.Context, page *rod.Page) {
+	// Different consent button selectors
 	consentButtonSelectors := []string{
 		"button#L2AGLb",
 		"[aria-label='Accept all']",
@@ -805,132 +780,168 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 		"button.tHlp8d",
 		"form:nth-child(2) button",
 		"div.VDity button:first-child",
-		"button:contains('Accept')",
-		"button:contains('I agree')",
 	}
 
 	for _, selector := range consentButtonSelectors {
 		err := rod.Try(func() {
-			el := page.MustElement(selector)
+			el, err := page.Element(selector)
+			if err != nil {
+				return
+			}
+			// Use MustClick instead of Click to simplify the call
 			el.MustClick()
 			logger.Info(ctx, "Clicked consent button", "selector", selector)
+			time.Sleep(500 * time.Millisecond)
 		})
 		if err == nil {
 			break
 		}
 	}
+}
 
-	// Wait a bit for the page to load images
-	time.Sleep(1 * time.Second)
-	err = rod.Try(func() {
-		page.MustWaitLoad()
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to wait for page load", "error", fmt.Sprintf("%v", err))
-	}
-
+// extractImageUrl tries to extract image URLs from the page using different methods
+func extractImageUrl(ctx context.Context, page *rod.Page) string {
 	var imgURL string
 
-	err = rod.Try(func() {
-		elements, err := page.Elements("img[src^='data:image/']")
-		if err != nil {
-			logger.Error(ctx, "Failed to find base64 image elements", "error", err)
-			return
+	// 1. First try to find image elements directly
+	elements, err := page.Elements("img[src^='https://']")
+	if err == nil && len(elements) > 0 {
+		// Filter to find reasonably sized images (skip icons)
+		for _, el := range elements {
+			src, err := el.Attribute("src")
+			if err != nil || src == nil {
+				continue
+			}
+
+			// Try to get image dimensions
+			width, height := 0, 0
+			widthAttr, _ := el.Attribute("width")
+			heightAttr, _ := el.Attribute("height")
+
+			if widthAttr != nil {
+				width, _ = strconv.Atoi(*widthAttr)
+			}
+			if heightAttr != nil {
+				height, _ = strconv.Atoi(*heightAttr)
+			}
+
+			// Skip small images that are likely icons
+			if width > 0 && height > 0 && (width < 100 || height < 100) {
+				continue
+			}
+
+			imgURL = *src
+			logger.Debug(ctx, "Found image element", "url", imgURL)
+			return imgURL
 		}
-		logger.Debug(ctx, "Found base64 images", "count", len(elements))
-		if len(elements) > 0 {
-			for i, el := range elements {
-				src, _ := el.Attribute("src")
-				alt, _ := el.Attribute("alt")
-				height, _ := el.Attribute("height")
-				width, _ := el.Attribute("width")
-				class, _ := el.Attribute("class")
-				id, _ := el.Attribute("id")
-				srcValue := "nil"
-				if src != nil {
-					if len(*src) > 100 {
-						srcValue = (*src)[:20] + "..."
-					} else {
-						srcValue = *src
-					}
-				}
-				altValue := "nil"
-				if alt != nil {
-					altValue = *alt
-				}
-				heightValue := "nil"
-				if height != nil {
-					heightValue = *height
-				}
-				widthValue := "nil"
-				if width != nil {
-					widthValue = *width
-				}
-				classValue := "nil"
-				if class != nil {
-					classValue = *class
-				}
-				idValue := "nil"
-				if id != nil {
-					idValue = *id
-				}
-				html, _ := el.HTML()
-				intheight, err := strconv.Atoi(heightValue)
-				if err != nil {
-					logger.Error(ctx, "Error trying to get image heigh")
-				}
-				intwidth, err := strconv.Atoi(widthValue)
-				if err != nil {
-					logger.Error(ctx, "Error trying to get image width")
-				}
-				if intheight < 100 || intwidth < 100 {
-					logger.Debug(ctx, "Small element, skipping and selecting next one...")
-					continue
-				}
-				logger.Debug(ctx, "Image element details",
-					"index", i,
-					"src", srcValue,
-					"alt", altValue,
-					"height", heightValue,
-					"width", widthValue,
-					"class", classValue,
-					"id", idValue,
-					"html", html)
+	}
 
-				logger.Debug(ctx, "Clicking on image to open full-size view")
-				err = rod.Try(func() {
-					el.MustClick()
-				})
-				if err != nil {
-					break
-				}
-				logger.Debug(ctx, "Successfully clicked first element")
-				page.MustWaitLoad()
+	// 2. Try to extract from HTML source
+	html, err := page.HTML()
+	if err == nil {
+		patterns := []string{
+			`murl&quot;:&quot;(http[^&"]+)&quot;`,
+			`murl":"(http[^"]+)"`,
+			`src="(https://th.bing.com/[^"]+)"`,
+			`src="(https://encrypted-tbn0.gstatic.com/[^"]+)"`,
+		}
 
-				html, err = page.HTML()
+		for _, pattern := range patterns {
+			re := regexp.MustCompile(pattern)
+			matches := re.FindStringSubmatch(html)
+			if len(matches) > 1 {
+				encodedURL := matches[1]
+				decodedURL, err := url.QueryUnescape(encodedURL)
 				if err == nil {
-					imgURLPattern := `imgurl=(http[^&"]+)`
-					re := regexp.MustCompile(imgURLPattern)
-					matches := re.FindStringSubmatch(html)
-					if len(matches) > 1 {
-						encodedURL := matches[1]
-						decodedURL, err := url.QueryUnescape(encodedURL)
-						if err == nil {
-							imgURL = decodedURL
-							logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
-							break
-						}
-					}
-				}
-				if imgURL != "" {
-					break
+					imgURL = decodedURL
+					logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL, "pattern", pattern)
+					return imgURL
 				}
 			}
 		}
+	}
+
+	// If no image found, return empty
+	return ""
+}
+
+func searchGoogleImages(ctx context.Context, query string) (string, error) {
+	// Create a span for tracing
+	ctx, span := tracer.Start(ctx, "google.image_search", trace.WithAttributes(
+		attribute.String("search.query", query),
+	))
+	defer span.End()
+
+	// Get browser configuration
+	config := GetDefaultBrowserConfig()
+
+	// Create a page factory function for the pool
+	createPage := func(ctx context.Context) *rod.Page {
+		return createBrowserPage(ctx, config)
+	}
+
+	// Get a page from the pool
+	page := browserPool.Get(ctx, createPage)
+	if page == nil {
+		logger.Error(ctx, "Failed to get browser from pool")
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	// Schedule returning the page to the pool
+	defer func() {
+		// Clear page state before returning to pool
+		err := rod.Try(func() {
+			page.MustNavigate("about:blank")
+		})
+		if err != nil {
+			// If clearing failed, don't return to pool
+			logger.Warn(ctx, "Failed to reset page, closing instead of returning to pool", "error", err)
+			page.Close()
+		} else {
+			browserPool.Put(ctx, page)
+		}
+	}()
+
+	logger.Info(ctx, "Successfully got browser from pool")
+
+	// Set page timeout
+	pageCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	page = page.Context(pageCtx)
+
+	// Navigate to Google Images search with timeout
+	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
+	logger.Info(ctx, "Navigating to search URL", "url", searchURL)
+
+	err := rod.Try(func() {
+		page.MustNavigate(searchURL)
 	})
+
 	if err != nil {
-		logger.Error(ctx, "Failed to select base64 image element", "error", err)
+		logger.Error(ctx, "Failed to navigate to URL", "url", searchURL, "error", err)
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
+
+	// Try to handle cookie consent dialogs
+	handleConsentDialogs(ctx, page)
+
+	// Wait a moment for the page to render
+	time.Sleep(500 * time.Millisecond)
+
+	var imgURL string
+
+	// Try to extract image URLs with a timeout
+	err = rod.Try(func() {
+		imgURL = extractImageUrl(ctx, page)
+	})
+
+	if err != nil || imgURL == "" {
+		logger.Error(ctx, "Failed to extract image URL", "error", err)
+		imgURL = fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
 	}
 
 	logger.Info(ctx, "Returning image URL", "url", imgURL)
@@ -985,7 +996,7 @@ func main() {
 	// Initialize browser pool
 	browserConfig := GetDefaultBrowserConfig()
 	poolSize = browserConfig.MaxPoolSize
-	browserPool = rod.NewPagePool(poolSize)
+	browserPool = NewPagePool(poolSize)
 
 	logger.Info(ctx, "Initialized browser pool", "size", poolSize)
 
@@ -1044,12 +1055,7 @@ func main() {
 	go func() {
 		<-stop
 		logger.Info(ctx, "Cleaning up browser pool")
-		browserPool.Cleanup(func(p *rod.Page) {
-			err := p.Close()
-			if err != nil {
-				logger.Error(ctx, "Error closing browser page", "error", err)
-			}
-		})
+		browserPool.Cleanup(ctx)
 	}()
 	// Wait for termination signal
 	<-stop
