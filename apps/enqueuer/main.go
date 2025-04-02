@@ -23,7 +23,6 @@ import (
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
-	"github.com/go-rod/rod/lib/proto"
 	"github.com/nats-io/nats.go"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -240,18 +239,23 @@ func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
 		p.browserList = p.browserList[:len(p.browserList)-1]
 		p.logger.Debug(ctx, "Reusing browser instance from pool", "remaining", len(p.browserList))
 
+		// Use a short context for health check
+		checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
 		// Verify browser is still usable
 		err := rod.Try(func() {
 			// Just create a page and close it as a health check
-			page := browser.MustPage()
+			page := browser.Context(checkCtx).MustPage()
 			page.MustClose()
 		})
 
 		if err != nil {
-			p.logger.Warn(ctx, "Pooled browser instance is not usable, closing it and creating a new one", "error", err)
-			if browser != nil {
-				_ = browser.Close() // Ignore error, it's likely already closed
-			}
+			p.logger.Warn(ctx, "Pooled browser instance is not usable, creating a new one", "error", fmt.Sprintf("%v", err))
+			// Try to close the unusable browser
+			closeCtx, closeCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = browser.Context(closeCtx).Close()
+			closeCancel()
 			browser = nil // Force creating a new one
 		}
 	}
@@ -264,7 +268,7 @@ func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
 		}
 	}
 
-	// Create release function
+	// Create release function that will properly handle the browser
 	release := func() {
 		p.Release(ctx, browser)
 	}
@@ -281,25 +285,33 @@ func (p *BrowserPool) Release(ctx context.Context, browser *rod.Browser) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	// Use a short context for health check
+	checkCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
 	// Check if the browser is still connected by trying to create a page
 	err := rod.Try(func() {
-		page := browser.MustPage()
+		page := browser.Context(checkCtx).MustPage()
 		page.MustClose()
 	})
 
 	if err != nil {
-		p.logger.Debug(ctx, "Browser disconnected, not returning to pool")
-		// Try to close it anyway
-		_ = browser.Close()
+		p.logger.Debug(ctx, "Browser disconnected, closing", "error", fmt.Sprintf("%v", err))
+		// Try to close it anyway with a new context
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		_ = browser.Context(closeCtx).Close()
+		closeCancel()
 		return
 	}
 
 	// If the pool is full, close the browser
 	if len(p.browserList) >= p.maxInstances {
 		p.logger.Debug(ctx, "Pool is full, closing browser instance")
-		if err := browser.Close(); err != nil {
-			p.logger.Error(ctx, "Error closing browser", "error", err)
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		if err := browser.Context(closeCtx).Close(); err != nil {
+			p.logger.Error(ctx, "Error closing browser", "error", fmt.Sprintf("%v", err))
 		}
+		closeCancel()
 		return
 	}
 
@@ -475,9 +487,16 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		imageURL, err = searchBingImages(ctx, msg.Content)
 		if err != nil {
 			logger.Error(ctx, "Failed to search Bing Images", "error", err, "query", msg.Content)
-			// Use a placeholder image if both searches fail
-			imageURL = fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(msg.Content))
+			// Return an error instead of using a placeholder
+			http.Error(w, "Failed to find an image for the given content", http.StatusInternalServerError)
+			return
 		}
+	}
+
+	if imageURL == "" {
+		logger.Error(ctx, "Both search engines returned empty image URL", "query", msg.Content)
+		http.Error(w, "Failed to find an image for the given content", http.StatusInternalServerError)
+		return
 	}
 
 	if msg.ID == "" {
@@ -681,56 +700,87 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
-	// Create context with timeout
-	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel() // Always cancel the context to release resources
+	// Retry configuration
+	maxRetries := 2
+	var imgURL string
+	var lastErr error
 
-	// Get browser from pool
-	browser, release, err := browserPool.Get(searchCtx)
-	if err != nil {
-		logger.Error(ctx, "Failed to get browser from pool for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			logger.Info(ctx, "Retrying Bing image search",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"query", query)
+			// Wait a bit before retrying
+			select {
+			case <-time.After(time.Duration(attempt) * time.Second):
+				// Continue after waiting
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+
+		// Create context with timeout for this attempt
+		searchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+		// Get browser from pool
+		browser, release, err := browserPool.Get(searchCtx)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("failed to get browser from pool: %w", err)
+			logger.Error(ctx, "Failed to get browser from pool", "error", lastErr.Error(), "attempt", attempt)
+			continue // Try again
+		}
+
+		imgURL, err = executeBingImageSearch(searchCtx, browser, query)
+
+		// Always release the browser back to the pool
+		release()
+		cancel() // Cancel the timeout context
+
+		if err == nil && imgURL != "" {
+			return imgURL, nil // Success
+		}
+
+		lastErr = err
+		logger.Error(ctx, "Bing image search failed",
+			"error", fmt.Sprintf("%v", err),
+			"attempt", attempt,
+			"query", query)
 	}
 
-	// Always release the browser back to the pool
-	defer release()
+	return "", lastErr // Return the last error after all retries fail
+}
 
-	logger.Info(searchCtx, "Successfully got browser from pool for Bing search")
-
-	// Set the context on the browser before creating a page
-	browser = browser.Context(searchCtx)
+// executeBingImageSearch performs the actual Bing search with the browser
+func executeBingImageSearch(ctx context.Context, browser *rod.Browser, query string) (string, error) {
+	// Set the context on the browser
+	browser = browser.Context(ctx)
 
 	// Create page
 	var page *rod.Page
-	err = rod.Try(func() {
+	err := rod.Try(func() {
 		page = browser.MustPage()
 	})
 
 	if err != nil {
-		logger.Error(ctx, "Failed to create page for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+		return "", fmt.Errorf("failed to create page: %w", err)
 	}
 
 	// Make sure page is closed
 	defer func() {
+		// Use a new context for closing to avoid deadline exceeded errors
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		err := rod.Try(func() {
-			page.MustClose()
+			page.Context(closeCtx).MustClose()
 		})
+
 		if err != nil {
-			logger.Warn(ctx, "Failed to close page from Bing search", "error", fmt.Sprintf("%v", err))
+			logger.Warn(ctx, "Failed to close page", "error", fmt.Sprintf("%v", err))
 		}
 	}()
-
-	logger.Info(ctx, "Page created successfully for Bing search")
-
-	// Set user agent
-	err = rod.Try(func() {
-		page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
-			UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-		})
-	})
 
 	// Navigate to Bing Images search
 	searchURL := "https://www.bing.com/images/search?q=" + url.QueryEscape(query)
@@ -741,13 +791,8 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	})
 
 	if err != nil {
-		logger.Error(ctx, "Failed to navigate to Bing URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+		return "", fmt.Errorf("failed to navigate to Bing URL: %w", err)
 	}
-
-	logger.Info(ctx, "Successfully navigated to Bing URL", "url", searchURL)
-
 	// Wait for page to stabilize
 	err = rod.Try(func() {
 		err = page.WaitStable(2 * time.Second)
@@ -821,7 +866,8 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	}
 
 	logger.Info(ctx, "Returning Bing image URL", "url", imgURL)
-	return imgURL, nil
+	// Return the image URL (or empty string) and any error
+	return imgURL, err
 }
 
 func searchGoogleImages(ctx context.Context, query string) (string, error) {
@@ -831,48 +877,86 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
-	// Create context with timeout
-	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
-	defer cancel() // Always cancel the context to release resources
-	// Get browser from pool
-	browser, release, err := browserPool.Get(searchCtx)
-	if err != nil {
-		logger.Error(ctx, "Failed to get browser from pool", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+	// Retry configuration
+	maxRetries := 2
+	var imgURL string
+	var lastErr error
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			logger.Info(ctx, "Retrying Google image search",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"query", query)
+			// Wait a bit before retrying
+			select {
+			case <-time.After(time.Duration(attempt) * time.Second):
+				// Continue after waiting
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
+
+		// Create context with timeout for this attempt
+		searchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+
+		// Get browser from pool
+		browser, release, err := browserPool.Get(searchCtx)
+		if err != nil {
+			cancel()
+			lastErr = fmt.Errorf("failed to get browser from pool: %w", err)
+			logger.Error(ctx, "Failed to get browser from pool", "error", lastErr.Error(), "attempt", attempt)
+			continue // Try again
+		}
+
+		imgURL, err = executeGoogleImageSearch(searchCtx, browser, query)
+
+		// Always release the browser back to the pool
+		release()
+		cancel() // Cancel the timeout context
+
+		if err == nil && imgURL != "" {
+			return imgURL, nil // Success
+		}
+
+		lastErr = err
+		logger.Error(ctx, "Google image search failed",
+			"error", fmt.Sprintf("%v", err),
+			"attempt", attempt,
+			"query", query)
 	}
 
-	// Always release the browser back to the pool
-	defer release()
+	return "", lastErr // Return the last error after all retries fail
+}
 
-	logger.Info(searchCtx, "Successfully got browser from pool")
-
-	// Set the context on the browser before creating a page
-	browser = browser.Context(searchCtx)
+func executeGoogleImageSearch(ctx context.Context, browser *rod.Browser, query string) (string, error) {
+	// Set the context on the browser
+	browser = browser.Context(ctx)
 
 	// Create page
 	var page *rod.Page
-	err = rod.Try(func() {
+	err := rod.Try(func() {
 		page = browser.MustPage()
 	})
 
 	if err != nil {
-		logger.Error(ctx, "Failed to create page", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+		return "", fmt.Errorf("failed to create page: %w", err)
 	}
 
 	// Make sure page is closed
 	defer func() {
+		// Use a new context for closing to avoid deadline exceeded errors
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
 		err := rod.Try(func() {
-			page.MustClose()
+			page.Context(closeCtx).MustClose()
 		})
+
 		if err != nil {
 			logger.Warn(ctx, "Failed to close page", "error", fmt.Sprintf("%v", err))
 		}
 	}()
-
-	logger.Info(ctx, "Page created successfully")
 
 	// Navigate to Google Images search
 	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
@@ -883,13 +967,8 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	})
 
 	if err != nil {
-		logger.Error(ctx, "Failed to navigate to URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
+		return "", fmt.Errorf("failed to navigate to URL: %w", err)
 	}
-
-	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
-
 	// Wait for page to stabilize
 	err = rod.Try(func() {
 		err = page.WaitStable(2 * time.Second)
@@ -1036,7 +1115,9 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	}
 
 	logger.Info(ctx, "Returning image URL", "url", imgURL)
-	return imgURL, nil
+
+	// Return the image URL (or empty string) and any error
+	return imgURL, err
 }
 
 func main() {
