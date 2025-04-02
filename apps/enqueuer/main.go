@@ -23,6 +23,7 @@ import (
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/nats-io/nats.go"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -39,10 +40,93 @@ type Message struct {
 
 // Global variables
 var (
-	natsConn *connections.NATSConnection
-	logger   *logging.Logger
-	tracer   = tracing.GetTracer("enqueuer")
+	natsConn     *connections.NATSConnection
+	logger       *logging.Logger
+	tracer       = tracing.GetTracer("enqueuer")
+	browserPool  *rod.PagePool
+	browserMutex sync.Mutex
+	poolSize     = 3 // Configurable pool size
 )
+
+// BrowserConfig holds configuration for browser instances
+type BrowserConfig struct {
+	Timeout     time.Duration
+	Headless    bool
+	ChromePath  string
+	UserAgent   string
+	MaxPoolSize int
+}
+
+// createBrowserPage creates a new browser page for the pool
+func createBrowserPage(config BrowserConfig) *rod.Page {
+	browserMutex.Lock()
+	defer browserMutex.Unlock()
+
+	logger.Debug(context.Background(), "Creating new browser instance")
+
+	u, err := launcher.New().
+		Bin(config.ChromePath).
+		Headless(config.Headless).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "").
+		Set("window-size", "1366,768").
+		Set("user-agent", config.UserAgent).
+		Set("accept-language", "en-US,en;q=0.9").
+		Launch()
+
+	if err != nil {
+		logger.Error(context.Background(), "Failed to launch browser", "error", err)
+		return nil
+	}
+
+	// Create browser instance with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), config.Timeout)
+	defer cancel()
+
+	browser := rod.New().
+		ControlURL(u).
+		Context(ctx)
+
+	err = browser.Connect()
+	if err != nil {
+		logger.Error(context.Background(), "Failed to connect to browser", "error", err)
+		return nil
+	}
+
+	// Create incognito page
+	page, err := browser.Incognito()
+	if err != nil {
+		logger.Error(context.Background(), "Failed to create incognito context", "error", err)
+		return nil
+	}
+
+	p, err := page.Page(proto.TargetCreateTarget{})
+	if err != nil {
+		logger.Error(context.Background(), "Failed to create page", "error", err)
+		return nil
+	}
+
+	logger.Debug(context.Background(), "Browser instance created successfully")
+	return p
+}
+
+// GetDefaultBrowserConfig returns a default browser configuration
+func GetDefaultBrowserConfig() BrowserConfig {
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/chromium-browser" // Default path for our container
+	}
+
+	return BrowserConfig{
+		Timeout:     30 * time.Second,
+		Headless:    true,
+		ChromePath:  chromePath,
+		UserAgent:   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+		MaxPoolSize: 3,
+	}
+}
 
 // ResponseCache stores response messages by trace ID
 type ResponseCache struct {
@@ -898,6 +982,13 @@ func main() {
 	}
 	defer sub.Unsubscribe()
 
+	// Initialize browser pool
+	browserConfig := GetDefaultBrowserConfig()
+	poolSize = browserConfig.MaxPoolSize
+	browserPool = rod.NewPagePool(poolSize)
+
+	logger.Info(ctx, "Initialized browser pool", "size", poolSize)
+
 	// Create a server with logging middleware
 	srv := server.NewServer("enqueuer",
 		server.WithLogger(logger),
@@ -949,6 +1040,17 @@ func main() {
 		}
 	}()
 
+	// Set up browser pool cleanup
+	go func() {
+		<-stop
+		logger.Info(ctx, "Cleaning up browser pool")
+		browserPool.Cleanup(func(p *rod.Page) {
+			err := p.Close()
+			if err != nil {
+				logger.Error(ctx, "Error closing browser page", "error", err)
+			}
+		})
+	}()
 	// Wait for termination signal
 	<-stop
 
