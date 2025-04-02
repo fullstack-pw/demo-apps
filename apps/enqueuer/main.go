@@ -23,6 +23,7 @@ import (
 	"github.com/fullstack-pw/shared/tracing"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/nats-io/nats.go"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -39,9 +40,10 @@ type Message struct {
 
 // Global variables
 var (
-	natsConn *connections.NATSConnection
-	logger   *logging.Logger
-	tracer   = tracing.GetTracer("enqueuer")
+	natsConn    *connections.NATSConnection
+	logger      *logging.Logger
+	tracer      = tracing.GetTracer("enqueuer")
+	browserPool *BrowserPool
 )
 
 // ResponseCache stores response messages by trace ID
@@ -141,6 +143,210 @@ func (rc *ResponseCache) GetWithTimeout(traceID string, timeout time.Duration) (
 func (rc *ResponseCache) CleanExpired(maxAge time.Duration) {
 	// TODO Implementation would depend on when entries were added, we could add timestamps
 	// For now, we'll skip this as we're cleaning up after retrieval
+}
+
+// BrowserPool manages a pool of browser instances
+type BrowserPool struct {
+	mu           sync.Mutex
+	browserList  []*rod.Browser
+	maxInstances int
+	logger       *logging.Logger
+}
+
+// NewBrowserPool creates a new browser pool with configuration
+func NewBrowserPool(maxInstances int, logger *logging.Logger) *BrowserPool {
+	return &BrowserPool{
+		browserList:  make([]*rod.Browser, 0, maxInstances),
+		maxInstances: maxInstances,
+		logger:       logger,
+	}
+}
+
+// Status returns the current status of the pool
+func (p *BrowserPool) Status() map[string]interface{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	return map[string]interface{}{
+		"pool_size":     len(p.browserList),
+		"max_instances": p.maxInstances,
+	}
+}
+
+// Initialize initializes the browser pool
+func (p *BrowserPool) Initialize(ctx context.Context) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Warm-up: create one browser instance to speed up the first request
+	if p.maxInstances > 0 {
+		p.logger.Info(ctx, "Warming up browser pool with one instance")
+		browser, err := p.createBrowserInstance(ctx)
+		if err != nil {
+			p.logger.Error(ctx, "Failed to warm up browser pool", "error", err)
+			return err
+		}
+		p.browserList = append(p.browserList, browser)
+		p.logger.Info(ctx, "Browser pool initialized successfully", "instances", 1)
+	}
+
+	return nil
+}
+
+// createBrowserInstance creates a new browser instance
+func (p *BrowserPool) createBrowserInstance(ctx context.Context) (*rod.Browser, error) {
+	p.logger.Info(ctx, "Creating new browser instance")
+
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/chromium-browser" // Default path for our container
+	}
+
+	// Create a new launcher instance each time (not reusing p.launch)
+	launch := launcher.New().
+		Bin(chromePath).
+		Headless(true).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "")
+
+	u, err := launch.Launch()
+	if err != nil {
+		return nil, fmt.Errorf("failed to launch browser: %w", err)
+	}
+
+	browser := rod.New().ControlURL(u).Timeout(30 * time.Second)
+	err = browser.Connect()
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to browser: %w", err)
+	}
+
+	p.logger.Info(ctx, "Browser instance created successfully")
+	return browser, nil
+}
+
+// Get gets a browser instance from the pool or creates a new one
+func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	var browser *rod.Browser
+	var err error
+
+	// Try to get a browser from the pool
+	if len(p.browserList) > 0 {
+		browser = p.browserList[len(p.browserList)-1]
+		p.browserList = p.browserList[:len(p.browserList)-1]
+		p.logger.Debug(ctx, "Reusing browser instance from pool", "remaining", len(p.browserList))
+
+		// Verify browser is still usable
+		err := rod.Try(func() {
+			// Just create a page and close it as a health check
+			page := browser.MustPage()
+			page.MustClose()
+		})
+
+		if err != nil {
+			p.logger.Warn(ctx, "Pooled browser instance is not usable, closing it and creating a new one", "error", err)
+			if browser != nil {
+				_ = browser.Close() // Ignore error, it's likely already closed
+			}
+			browser = nil // Force creating a new one
+		}
+	}
+
+	// Create a new browser if we didn't get a usable one from the pool
+	if browser == nil {
+		browser, err = p.createBrowserInstance(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Create release function
+	release := func() {
+		p.Release(ctx, browser)
+	}
+
+	return browser, release, nil
+}
+
+// Release returns a browser to the pool or closes it
+func (p *BrowserPool) Release(ctx context.Context, browser *rod.Browser) {
+	if browser == nil {
+		return
+	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Check if the browser is still connected by trying to create a page
+	err := rod.Try(func() {
+		page := browser.MustPage()
+		page.MustClose()
+	})
+
+	if err != nil {
+		p.logger.Debug(ctx, "Browser disconnected, not returning to pool")
+		// Try to close it anyway
+		_ = browser.Close()
+		return
+	}
+
+	// If the pool is full, close the browser
+	if len(p.browserList) >= p.maxInstances {
+		p.logger.Debug(ctx, "Pool is full, closing browser instance")
+		if err := browser.Close(); err != nil {
+			p.logger.Error(ctx, "Error closing browser", "error", err)
+		}
+		return
+	}
+
+	// Return the browser to the pool
+	p.browserList = append(p.browserList, browser)
+	p.logger.Debug(ctx, "Browser instance returned to pool", "pool_size", len(p.browserList))
+}
+
+// Close closes all browser instances in the pool
+func (p *BrowserPool) Close(ctx context.Context) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, browser := range p.browserList {
+		p.logger.Debug(ctx, "Closing browser instance")
+		if err := browser.Close(); err != nil {
+			p.logger.Error(ctx, "Error closing browser", "error", err)
+		}
+	}
+
+	p.browserList = nil
+	p.logger.Info(ctx, "All browser instances closed")
+}
+
+// BrowserPoolChecker checks the health of the browser pool
+type BrowserPoolChecker struct {
+	pool *BrowserPool
+}
+
+// Check implements the health.Checker interface
+func (c *BrowserPoolChecker) Check(ctx context.Context) error {
+	if c.pool == nil {
+		return fmt.Errorf("browser pool not initialized")
+	}
+
+	status := c.pool.Status()
+	if status["pool_size"].(int) == 0 {
+		// No browsers in pool, but not necessarily an error
+		return nil
+	}
+
+	return nil
+}
+
+// Name implements the health.Checker interface
+func (c *BrowserPoolChecker) Name() string {
+	return "browser-pool"
 }
 
 // handleResultMessage processes messages from the result queue
@@ -261,16 +467,16 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		queueName = "default"
 	}
 
-	// Search Bing Images for the content
+	// Search Images for the content
 	imageURL, err := searchGoogleImages(ctx, msg.Content)
 	if err != nil {
-		logger.Error(ctx, "Failed to search Google Images", "error", err)
-		http.Error(w, fmt.Sprintf("Failed to search Google Images: %v", err), http.StatusInternalServerError)
+		logger.Error(ctx, "Failed to search Google Images", "error", err, "query", msg.Content)
+		// Try Bing as a fallback
 		imageURL, err = searchBingImages(ctx, msg.Content)
 		if err != nil {
-			logger.Error(ctx, "Failed to search Bing Images", "error", err)
-			http.Error(w, fmt.Sprintf("Failed to search Bing Images: %v", err), http.StatusInternalServerError)
-			return
+			logger.Error(ctx, "Failed to search Bing Images", "error", err, "query", msg.Content)
+			// Use a placeholder image if both searches fail
+			imageURL = fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(msg.Content))
 		}
 	}
 
@@ -475,50 +681,25 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/google-chrome" // Default path for our container
-	}
+	// Create context with timeout
+	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel() // Always cancel the context to release resources
 
-	logger.Info(ctx, "Using Chrome binary from path for Bing search", "path", chromePath)
-	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-
-	// Create Chrome launcher
-	logger.Info(ctx, "Creating Chrome launcher for Bing search")
-	u, err := launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "").
-		Set("window-size", "1366,768"). // Typical laptop resolution
-		Set("user-agent", userAgent).
-		Set("accept-language", "en-US,en;q=0.9").
-		Launch()
-
+	// Get browser from pool
+	browser, release, err := browserPool.Get(searchCtx)
 	if err != nil {
-		logger.Error(ctx, "Failed to launch Chrome for Bing search", "error", fmt.Sprintf("%v", err))
+		logger.Error(ctx, "Failed to get browser from pool for Bing search", "error", fmt.Sprintf("%v", err))
 		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
 		return placeholderURL, nil
 	}
 
-	logger.Info(ctx, "Chrome launched successfully for Bing search", "control_url", u)
+	// Always release the browser back to the pool
+	defer release()
 
-	// Create browser instance
-	browser := rod.New().
-		ControlURL(u).
-		Timeout(30 * time.Second)
+	logger.Info(searchCtx, "Successfully got browser from pool for Bing search")
 
-	err = browser.Connect()
-	if err != nil {
-		logger.Error(ctx, "Failed to connect to Chrome for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully connected to browser for Bing search")
-	defer browser.Close()
+	// Set the context on the browser before creating a page
+	browser = browser.Context(searchCtx)
 
 	// Create page
 	var page *rod.Page
@@ -532,7 +713,24 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 		return placeholderURL, nil
 	}
 
+	// Make sure page is closed
+	defer func() {
+		err := rod.Try(func() {
+			page.MustClose()
+		})
+		if err != nil {
+			logger.Warn(ctx, "Failed to close page from Bing search", "error", fmt.Sprintf("%v", err))
+		}
+	}()
+
 	logger.Info(ctx, "Page created successfully for Bing search")
+
+	// Set user agent
+	err = rod.Try(func() {
+		page.MustSetUserAgent(&proto.NetworkSetUserAgentOverride{
+			UserAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+		})
+	})
 
 	// Navigate to Bing Images search
 	searchURL := "https://www.bing.com/images/search?q=" + url.QueryEscape(query)
@@ -633,46 +831,24 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	))
 	defer span.End()
 
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/google-chrome" // Default path for our container
-	}
-
-	logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
-
-	// Use a very basic approach - create a launcher with just essential flags
-	logger.Info(ctx, "Creating Chrome launcher")
-	u, err := launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "").
-		Launch()
-
+	// Create context with timeout
+	searchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel() // Always cancel the context to release resources
+	// Get browser from pool
+	browser, release, err := browserPool.Get(searchCtx)
 	if err != nil {
-		logger.Error(ctx, "Failed to launch Chrome", "error", fmt.Sprintf("%v", err))
+		logger.Error(ctx, "Failed to get browser from pool", "error", fmt.Sprintf("%v", err))
 		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
 		return placeholderURL, nil
 	}
 
-	logger.Info(ctx, "Chrome launched successfully", "control_url", u)
+	// Always release the browser back to the pool
+	defer release()
 
-	// Create browser instance
-	browser := rod.New().
-		ControlURL(u).
-		Timeout(30 * time.Second)
+	logger.Info(searchCtx, "Successfully got browser from pool")
 
-	err = browser.Connect()
-	if err != nil {
-		logger.Error(ctx, "Failed to connect to Chrome", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully connected to browser")
-	defer browser.Close()
+	// Set the context on the browser before creating a page
+	browser = browser.Context(searchCtx)
 
 	// Create page
 	var page *rod.Page
@@ -685,6 +861,16 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
 		return placeholderURL, nil
 	}
+
+	// Make sure page is closed
+	defer func() {
+		err := rod.Try(func() {
+			page.MustClose()
+		})
+		if err != nil {
+			logger.Warn(ctx, "Failed to close page", "error", fmt.Sprintf("%v", err))
+		}
+	}()
 
 	logger.Info(ctx, "Page created successfully")
 
@@ -794,7 +980,7 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 				html, _ := el.HTML()
 				intheight, err := strconv.Atoi(heightValue)
 				if err != nil {
-					logger.Error(ctx, "Error trying to get image heigh")
+					logger.Error(ctx, "Error trying to get image height")
 				}
 				intwidth, err := strconv.Atoi(widthValue)
 				if err != nil {
@@ -864,6 +1050,15 @@ func main() {
 		logging.WithJSONFormat(true),
 	)
 
+	browserPool = NewBrowserPool(5, logger) // Allow up to 5 concurrent browser instances
+	if err := browserPool.Initialize(ctx); err != nil {
+		logger.Error(ctx, "Failed to initialize browser pool", "error", err)
+		// Continue anyway, as search will create instances on-demand if needed
+	}
+
+	// Make sure we clean up the browser pool when shutting down
+	defer browserPool.Close(ctx)
+
 	// Initialize the tracer
 	tracerCfg := tracing.DefaultConfig("enqueuer")
 	tp, err := tracing.InitTracer(tracerCfg)
@@ -930,31 +1125,75 @@ func main() {
 		}
 	})
 	// Register health checks
+	browserPoolChecker := &BrowserPoolChecker{pool: browserPool}
 	srv.RegisterHealthChecks(
-		[]health.Checker{natsConn},
-		[]health.Checker{natsConn}, // Readiness checks
+		[]health.Checker{natsConn, browserPoolChecker},
+		[]health.Checker{natsConn, browserPoolChecker}, // Readiness checks
 	)
 	// Register ASCII handlers
 	srv.HandleFunc("/ascii/terminal", handleAsciiTerminal)
 	srv.HandleFunc("/ascii/html", handleAsciiHTML)
+	// Add browser pool status endpoint
+	srv.HandleFunc("/browsercheck", func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		logger.Debug(ctx, "Handling browser pool status request")
+
+		if browserPool == nil {
+			logger.Warn(ctx, "Browser pool not initialized")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("Browser pool not initialized"))
+			return
+		}
+
+		status := browserPool.Status()
+		logger.Debug(ctx, "Browser pool status", "status", status)
+
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(status); err != nil {
+			logger.Error(ctx, "Failed to encode browser pool status", "error", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+	})
 	// Set up signal handling
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 
+	// Use a context for graceful shutdown
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
 	// Start server in a goroutine
 	go func() {
 		logger.Info(ctx, "Starting enqueuer service", "port", 8080)
-		if err := srv.Start(); err != nil {
+		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal(ctx, "Server failed", "error", err)
 		}
 	}()
 
 	// Wait for termination signal
-	<-stop
+	sig := <-stop
+	logger.Info(ctx, "Received termination signal", "signal", sig)
 
-	// Shut down gracefully
-	shutdownCtx, shutdownCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer shutdownCancel()
+	// Initiate graceful shutdown
+	logger.Info(ctx, "Shutting down services...")
 
-	logger.Info(shutdownCtx, "Shutting down enqueuer service")
+	// First close the browser pool to free resources
+	if browserPool != nil {
+		logger.Info(ctx, "Shutting down browser pool...")
+		browserPool.Close(ctx)
+	}
+
+	// Then stop the HTTP server
+	if err := srv.Stop(); err != nil {
+		logger.Error(ctx, "Error stopping server", "error", err)
+	}
+
+	// Wait for context timeout or cancellation
+	<-shutdownCtx.Done()
+	if shutdownCtx.Err() == context.DeadlineExceeded {
+		logger.Warn(ctx, "Shutdown timed out, forcing exit")
+	} else {
+		logger.Info(ctx, "Graceful shutdown complete")
+	}
 }
