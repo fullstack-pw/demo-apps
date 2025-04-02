@@ -150,7 +150,6 @@ type BrowserPool struct {
 	mu           sync.Mutex
 	browserList  []*rod.Browser
 	maxInstances int
-	launch       *launcher.Launcher
 	logger       *logging.Logger
 }
 
@@ -179,22 +178,6 @@ func (p *BrowserPool) Initialize(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/chromium-browser" // Default path for our container
-	}
-
-	p.logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
-
-	// Create a launcher with essential flags
-	p.launch = launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "")
-
 	// Warm-up: create one browser instance to speed up the first request
 	if p.maxInstances > 0 {
 		p.logger.Info(ctx, "Warming up browser pool with one instance")
@@ -214,7 +197,21 @@ func (p *BrowserPool) Initialize(ctx context.Context) error {
 func (p *BrowserPool) createBrowserInstance(ctx context.Context) (*rod.Browser, error) {
 	p.logger.Info(ctx, "Creating new browser instance")
 
-	u, err := p.launch.Launch()
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/chromium-browser" // Default path for our container
+	}
+
+	// Create a new launcher instance each time (not reusing p.launch)
+	launch := launcher.New().
+		Bin(chromePath).
+		Headless(true).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "")
+
+	u, err := launch.Launch()
 	if err != nil {
 		return nil, fmt.Errorf("failed to launch browser: %w", err)
 	}
@@ -244,8 +241,10 @@ func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
 		p.logger.Debug(ctx, "Reusing browser instance from pool", "remaining", len(p.browserList))
 
 		// Verify browser is still usable
-		err = rod.Try(func() {
-			browser.MustPage().MustClose()
+		err := rod.Try(func() {
+			// Just create a page and close it as a health check
+			page := browser.MustPage()
+			page.MustClose()
 		})
 
 		if err != nil {
@@ -265,7 +264,7 @@ func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
 		}
 	}
 
-	// Create release function that properly handles errors
+	// Create release function
 	release := func() {
 		p.Release(ctx, browser)
 	}
@@ -275,31 +274,23 @@ func (p *BrowserPool) Get(ctx context.Context) (*rod.Browser, func(), error) {
 
 // Release returns a browser to the pool or closes it
 func (p *BrowserPool) Release(ctx context.Context, browser *rod.Browser) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
-	// Check if the browser is still connected
 	if browser == nil {
-		p.logger.Debug(ctx, "Browser is nil, not returning to pool")
 		return
 	}
 
-	// In rod, we can check for connection health with MustIncognito
-	connected := true
-	err := rod.Try(func() {
-		browser.MustPage() // This will panic if browser is not usable
-	})
-	if err != nil {
-		connected = false
-	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
-	if !connected {
-		p.logger.Debug(ctx, "Browser not functioning, not returning to pool")
-		if browser != nil {
-			if err := browser.Close(); err != nil {
-				p.logger.Error(ctx, "Error closing disconnected browser", "error", err)
-			}
-		}
+	// Check if the browser is still connected by trying to create a page
+	err := rod.Try(func() {
+		page := browser.MustPage()
+		page.MustClose()
+	})
+
+	if err != nil {
+		p.logger.Debug(ctx, "Browser disconnected, not returning to pool")
+		// Try to close it anyway
+		_ = browser.Close()
 		return
 	}
 
