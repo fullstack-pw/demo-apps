@@ -86,9 +86,9 @@ func NewServer(name string, options ...ServerOption) *Server {
 		mux:  mux,
 		server: &http.Server{
 			// We'll set the handler after applying options
-			ReadTimeout:  10 * time.Second,
-			WriteTimeout: 10 * time.Second,
-			IdleTimeout:  30 * time.Second,
+			ReadTimeout:  60 * time.Second,
+			WriteTimeout: 60 * time.Second,
+			IdleTimeout:  90 * time.Second,
 		},
 		logger: logging.NewLogger(name),
 		readyFn: func() bool {

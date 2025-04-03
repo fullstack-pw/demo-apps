@@ -672,7 +672,7 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 	}
 
 	logger.Info(ctx, "Successfully connected to browser")
-	defer browser.Close()
+	defer browser.MustClose()
 
 	// Create page
 	var page *rod.Page
@@ -704,13 +704,6 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 
 	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
 
-	err = rod.Try(func() { // DEBUG SESSION
-		page.MustScreenshot("before_consent.png")                          // DEBUG SESSION
-		logger.Info(ctx, "Took screenshot before handling consent dialog") // DEBUG SESSION
-	}) // DEBUG SESSION
-	if err != nil { // DEBUG SESSION
-		logger.Error(ctx, "Failed to take before_consent screenshot", "error", fmt.Sprintf("%v", err)) // DEBUG SESSION
-	} // DEBUG SESSION
 	// Wait for page to stabilize
 	err = rod.Try(func() {
 		err = page.WaitStable(2 * time.Second)
@@ -867,7 +860,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("enqueuer",
-		logging.WithMinLevel(logging.Debug),
+		logging.WithMinLevel(logging.Info),
 		logging.WithJSONFormat(true),
 	)
 
@@ -879,7 +872,6 @@ func main() {
 	}
 	defer func() {
 		if err := tracing.ShutdownTracer(ctx, tp); err != nil {
-			// Handle the error, for example:
 			log.Printf("Error shutting down tracer: %v", err)
 		}
 	}()
