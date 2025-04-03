@@ -198,7 +198,7 @@ func downloadImage(ctx context.Context, imageURL string) (string, error) {
 	return tempFile.Name(), nil
 }
 
-func publishResultsToNATS(ctx context.Context, messageId string, traceId string, asciiTerminal, asciiFile, asciiHTML string, headers map[string]string) error {
+func publishResultsToNATS(ctx context.Context, messageId string, traceId string, asciiTerminal, asciiHTML string, headers map[string]string) error {
 	ctx, span := tracer.Start(ctx, "nats.publish_results")
 	defer span.End()
 
@@ -326,51 +326,7 @@ func handleMessage(msg *nats.Msg) {
 					}
 				}
 
-				// 2. File mode
-				txtFilename := baseFilename + "_ascii.txt"
-				fileAscii, err := executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "file", "--columns", "80", "--output-file", txtFilename)
-				if err != nil {
-					logger.Error(ctx, "Failed to convert image to file ASCII art",
-						"error", err,
-						"id", message.ID,
-						"image_path", message.Headers["image_path"])
-				} else {
-					// Read the generated file
-					logger.Info(ctx, "FILE generated ", fileAscii)
-					txtContent, err := os.ReadFile(txtFilename)
-					if err != nil {
-						logger.Error(ctx, "Failed to read ASCII text file",
-							"error", err,
-							"id", message.ID,
-							"file_path", txtFilename)
-					} else {
-						// Store the file content in Redis
-						fileKey := message.ID + ":ascii:file"
-						logger.Info(ctx, "Storing file ASCII art in Redis",
-							"id", message.ID,
-							"key", fileKey,
-							"file_path", txtFilename,
-							"content_length", len(txtContent))
-
-						err = redisConn.SetWithTracing(ctx, fileKey, string(txtContent), 24*time.Hour)
-						if err != nil {
-							logger.Error(ctx, "Failed to store file ASCII art in Redis",
-								"error", err,
-								"id", message.ID,
-								"key", fileKey)
-						} else {
-							logger.Info(ctx, "File ASCII art stored successfully",
-								"id", message.ID,
-								"key", fileKey)
-							message.Headers["ascii_file_key"] = fileKey
-						}
-
-						// Clean up the text file
-						os.Remove(txtFilename)
-					}
-				}
-
-				// 3. HTML mode
+				// 2. HTML mode
 				htmlFilename := baseFilename + "_ascii.html"
 				htmlAscii, err = executeScript(ctx, asciiConverterPath, message.Headers["image_path"], "--mode", "html", "--columns", "80", "--output-file", htmlFilename)
 				if err != nil {
@@ -459,18 +415,8 @@ func handleMessage(msg *nats.Msg) {
 	// Extract traceId for correlation
 	traceId := tracing.GetTraceID(ctx)
 
-	// // Get any ASCII art that was generated
-	// var terminalAscii, htmlAscii string
-	// if terminalKey, ok := message.Headers["ascii_terminal_key"]; ok {
-	// 	// Get the terminal ASCII from Redis
-	// 	terminalAscii, _ = redisConn.GetWithTracing(ctx, terminalKey)
-	// }
-	// if htmlKey, ok := message.Headers["ascii_html_key"]; ok {
-	// 	// Get the HTML ASCII from Redis
-	// 	htmlAscii, _ = redisConn.GetWithTracing(ctx, htmlKey)
-	// }
 	// Directly publish the results we already have in memory
-	if err := publishResultsToNATS(ctx, message.ID, traceId, terminalAscii, "", htmlAscii, message.Headers); err != nil {
+	if err := publishResultsToNATS(ctx, message.ID, traceId, terminalAscii, htmlAscii, message.Headers); err != nil {
 		span.RecordError(err)
 		logger.Error(ctx, "Failed to publish results to NATS", "error", err)
 	}

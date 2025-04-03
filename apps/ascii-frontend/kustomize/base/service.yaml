@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ascii-frontend
+spec:
+  selector:
+    app: ascii-frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: ClusterIP

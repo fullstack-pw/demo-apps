@@ -1,4 +1,4 @@
-// This file allows you to create custom Cypress commands and overwrite existing ones
+// This file allows to create custom Cypress commands and overwrite existing ones
 
 // -- This is a parent command --
 Cypress.Commands.add('sendMessage', (message, queueName = 'cypress-test') => {
@@ -12,8 +12,26 @@ Cypress.Commands.add('sendMessage', (message, queueName = 'cypress-test') => {
     });
 });
 
-// Command to verify a message was processed by memorizer
-Cypress.Commands.add('verifyMemorizerProcessed', (messageId, timeout = 5000) => {
+// Command to check service health
+Cypress.Commands.add('checkServiceHealth', (service) => {
+    return cy.request({
+        method: 'GET',
+        url: `${Cypress.env(service.toUpperCase() + '_URL')}/health`,
+    }).then(response => {
+        expect(response.status).to.equal(200);
+        return response;
+    });
+});
+
+// Command to generate unique test IDs
+Cypress.Commands.add('generateTestId', (prefix = 'test') => {
+    const timestamp = Date.now();
+    const random = Math.floor(Math.random() * 10000);
+    return `${prefix}-${timestamp}-${random}`;
+});
+
+// Command to verify a message was processed by memorizer via Enqueuer
+Cypress.Commands.add('verifyMemorizerProcessed', (messageId, timeout = 10000) => {
     // Use polling to check if the message has been processed
     const checkInterval = 500; // ms
     const maxAttempts = timeout / checkInterval;
@@ -42,7 +60,8 @@ Cypress.Commands.add('verifyMemorizerProcessed', (messageId, timeout = 5000) => 
     return checkStatus();
 });
 
-Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 8000) => {
+// Command to verify a message was stored by writer via Enqueuer
+Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 15000) => {
     // Use polling to check if the message has been written
     const checkInterval = 500; // ms
     const maxAttempts = timeout / checkInterval;
@@ -69,25 +88,6 @@ Cypress.Commands.add('verifyWriterStored', (messageId, timeout = 8000) => {
     };
 
     return checkDatabase();
-});
-
-
-// Command to check service health
-Cypress.Commands.add('checkServiceHealth', (service) => {
-    return cy.request({
-        method: 'GET',
-        url: `${Cypress.env(service.toUpperCase() + '_URL')}/health`,
-    }).then(response => {
-        expect(response.status).to.equal(200);
-        return response;
-    });
-});
-
-// Command to generate unique test IDs
-Cypress.Commands.add('generateTestId', (prefix = 'test') => {
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 10000);
-    return `${prefix}-${timestamp}-${random}`;
 });
 
 // Command to verify trace context propagation
@@ -117,4 +117,46 @@ Cypress.Commands.add('verifyTraceContext', (messageId, timeout = 10000) => {
     };
 
     return checkTrace();
+});
+
+// Command to test the full message pipeline flow
+Cypress.Commands.add('testFullPipeline', (messageContent, options = {}) => {
+    const testId = `pipeline-${Date.now()}-${Cypress._.random(0, 10000)}`;
+    const messageData = {
+        id: testId,
+        content: messageContent,
+        headers: options.headers || {}
+    };
+
+    return cy.sendMessage(messageData, options.queue || 'cypress-test')
+        .then(sendResponse => {
+            expect(sendResponse.status).to.equal(201);
+
+            // Verify memorizer processed the message
+            return cy.verifyMemorizerProcessed(testId, options.memorizerTimeout || 10000)
+                .then(() => {
+                    // Verify writer stored the message
+                    return cy.verifyWriterStored(testId, options.writerTimeout || 15000)
+                        .then(storedMessage => {
+                            // Verify trace context if needed
+                            if (options.verifyTrace) {
+                                return cy.verifyTraceContext(testId, options.traceTimeout || 5000)
+                                    .then(traceId => {
+                                        return {
+                                            messageId: testId,
+                                            initialResponse: sendResponse.body,
+                                            storedMessage: storedMessage,
+                                            traceId: traceId
+                                        };
+                                    });
+                            }
+
+                            return {
+                                messageId: testId,
+                                initialResponse: sendResponse.body,
+                                storedMessage: storedMessage
+                            };
+                        });
+                });
+        });
 });

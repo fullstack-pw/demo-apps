@@ -32,8 +32,6 @@ const cleanupTestData = (messageIds) => {
 
 // Reset services to clean state
 const resetServices = () => {
-    // This function would trigger any cleanup endpoints in your services
-    // For example, clearing test queues or resetting connections
     return Promise.all([
         cy.request({
             method: 'POST',

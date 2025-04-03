@@ -57,13 +57,6 @@ var responseCache = ResponseCache{
 	signals: make(map[string]chan struct{}),
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Add response to cache
 func (rc *ResponseCache) Add(traceID string, response map[string]interface{}) {
 	rc.mu.Lock()
@@ -75,6 +68,25 @@ func (rc *ResponseCache) Add(traceID string, response map[string]interface{}) {
 	if signal, ok := rc.signals[traceID]; ok {
 		close(signal)
 	}
+}
+
+// CORS middleware to allow cross-origin requests
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers
+		w.Header().Set("Access-Control-Allow-Origin", "*") // Allow any origin
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Call the next handler
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Get response from cache with timeout
@@ -127,7 +139,7 @@ func (rc *ResponseCache) GetWithTimeout(traceID string, timeout time.Duration) (
 
 // Clean up expired entries (should be called periodically)
 func (rc *ResponseCache) CleanExpired(maxAge time.Duration) {
-	// Implementation would depend on when entries were added, we could add timestamps
+	// TODO Implementation would depend on when entries were added, we could add timestamps
 	// For now, we'll skip this as we're cleaning up after retrieval
 }
 
@@ -216,7 +228,6 @@ func publishToNATS(ctx context.Context, queueName string, msg Message) error {
 }
 
 // handleAdd handles the /add endpoint
-// Modified handleAdd function
 func handleAdd(w http.ResponseWriter, r *http.Request) {
 	// Create a context for this request
 	ctx := r.Context()
@@ -250,12 +261,17 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 		queueName = "default"
 	}
 
-	// Search Google Images for the content
+	// Search Bing Images for the content
 	imageURL, err := searchGoogleImages(ctx, msg.Content)
 	if err != nil {
 		logger.Error(ctx, "Failed to search Google Images", "error", err)
 		http.Error(w, fmt.Sprintf("Failed to search Google Images: %v", err), http.StatusInternalServerError)
-		return
+		imageURL, err = searchBingImages(ctx, msg.Content)
+		if err != nil {
+			logger.Error(ctx, "Failed to search Bing Images", "error", err)
+			http.Error(w, fmt.Sprintf("Failed to search Bing Images: %v", err), http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if msg.ID == "" {
@@ -283,7 +299,6 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	// Get current trace ID for correlation
 	traceID := tracing.GetTraceID(ctx)
 
-	// Wait for response with timeout
 	var asciiTerminal, asciiHTML string
 	timeout := 30 * time.Second // Adjust timeout as needed
 
@@ -309,6 +324,8 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		logger.Error(ctx, "Error encoding response", "error", err)
+		logger.Debug(ctx, "ASCII results", "response", response)
+		return
 	}
 
 	logger.Info(ctx, "Request handled successfully",
@@ -449,6 +466,164 @@ func handleAsciiHTML(w http.ResponseWriter, r *http.Request) {
 	// Return the ASCII HTML
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(html))
+}
+
+func searchBingImages(ctx context.Context, query string) (string, error) {
+	// Create a span for tracing
+	ctx, span := tracer.Start(ctx, "bing.image_search", trace.WithAttributes(
+		attribute.String("search.query", query),
+	))
+	defer span.End()
+
+	// Find the Chrome binary path
+	chromePath := os.Getenv("CHROME_PATH")
+	if chromePath == "" {
+		chromePath = "/usr/bin/google-chrome" // Default path for our container
+	}
+
+	logger.Info(ctx, "Using Chrome binary from path for Bing search", "path", chromePath)
+	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+
+	// Create Chrome launcher
+	logger.Info(ctx, "Creating Chrome launcher for Bing search")
+	u, err := launcher.New().
+		Bin(chromePath).
+		Headless(true).
+		Set("no-sandbox", "").
+		Set("disable-dev-shm-usage", "").
+		Set("disable-gpu", "").
+		Set("window-size", "1366,768"). // Typical laptop resolution
+		Set("user-agent", userAgent).
+		Set("accept-language", "en-US,en;q=0.9").
+		Launch()
+
+	if err != nil {
+		logger.Error(ctx, "Failed to launch Chrome for Bing search", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Chrome launched successfully for Bing search", "control_url", u)
+
+	// Create browser instance
+	browser := rod.New().
+		ControlURL(u).
+		Timeout(30 * time.Second)
+
+	err = browser.Connect()
+	if err != nil {
+		logger.Error(ctx, "Failed to connect to Chrome for Bing search", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Successfully connected to browser for Bing search")
+	defer browser.Close()
+
+	// Create page
+	var page *rod.Page
+	err = rod.Try(func() {
+		page = browser.MustPage()
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to create page for Bing search", "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Page created successfully for Bing search")
+
+	// Navigate to Bing Images search
+	searchURL := "https://www.bing.com/images/search?q=" + url.QueryEscape(query)
+	logger.Info(ctx, "Navigating to Bing search URL", "url", searchURL)
+
+	err = rod.Try(func() {
+		page.MustNavigate(searchURL)
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to navigate to Bing URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
+		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
+		return placeholderURL, nil
+	}
+
+	logger.Info(ctx, "Successfully navigated to Bing URL", "url", searchURL)
+
+	// Wait for page to stabilize
+	err = rod.Try(func() {
+		err = page.WaitStable(2 * time.Second)
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to wait for Bing page stability", "error", fmt.Sprintf("%v", err))
+	}
+
+	// Try to handle cookie consent dialogs specific to Bing
+	consentButtonSelectors := []string{
+		"#bnp_btn_accept",
+		".ccBtnAccept",
+		"#idSIButton9",
+		".bnp_btn_accept",
+		"[aria-label='Accept']",
+		"[title='Accept']",
+	}
+
+	for _, selector := range consentButtonSelectors {
+		err := rod.Try(func() {
+			el := page.MustElement(selector)
+			el.MustClick()
+			logger.Info(ctx, "Clicked Bing consent button", "selector", selector)
+		})
+		if err == nil {
+			break
+		}
+	}
+
+	// Wait a bit for the page to load images
+	time.Sleep(1 * time.Second)
+	err = rod.Try(func() {
+		page.MustWaitLoad()
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to wait for Bing page load", "error", fmt.Sprintf("%v", err))
+	}
+
+	var imgURL string
+
+	err = rod.Try(func() {
+		html, err := page.HTML()
+		if err == nil {
+			// Look for image URLs in the page source
+			patterns := []string{
+				`murl&quot;:&quot;(http[^&"]+)&quot;`,
+				`murl":"(http[^"]+)"`,
+				`src="(https://th.bing.com/[^"]+)"`,
+			}
+
+			for _, pattern := range patterns {
+				re := regexp.MustCompile(pattern)
+				matches := re.FindStringSubmatch(html)
+				if len(matches) > 1 {
+					encodedURL := matches[1]
+					decodedURL, err := url.QueryUnescape(encodedURL)
+					if err == nil {
+						imgURL = decodedURL
+						logger.Debug(ctx, "Found Bing image URL from HTML regex", "url", imgURL, "pattern", pattern)
+						break
+					}
+				}
+			}
+		}
+	})
+
+	if err != nil {
+		logger.Error(ctx, "Failed to extract Bing image URL", "error", err)
+	}
+
+	logger.Info(ctx, "Returning Bing image URL", "url", imgURL)
+	return imgURL, nil
 }
 
 func searchGoogleImages(ctx context.Context, query string) (string, error) {
@@ -671,29 +846,6 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 						}
 					}
 				}
-				maxAttempts := 3
-				var success bool
-
-				for attempt := 1; attempt <= maxAttempts; attempt++ {
-					err = rod.Try(func() {
-						page.MustScreenshot("after_click.png")
-						logger.Debug(ctx, "Took screenshot after clicking image")
-						success = true
-					})
-
-					if success {
-						break
-					}
-
-					if err != nil {
-						logger.Error(ctx, fmt.Sprintf("Error taking screenshot after clicking image (attempt %d/%d): ", attempt, maxAttempts), "error", err)
-						if attempt == maxAttempts {
-							logger.Error(ctx, "Failed to take screenshot after 10 attempts")
-							break
-						}
-						time.Sleep(1000 * time.Millisecond)
-					}
-				}
 				if imgURL != "" {
 					break
 				}
@@ -715,7 +867,7 @@ func main() {
 
 	// Initialize the logger
 	logger = logging.NewLogger("enqueuer",
-		logging.WithMinLevel(logging.Info),
+		logging.WithMinLevel(logging.Debug),
 		logging.WithJSONFormat(true),
 	)
 
@@ -759,7 +911,7 @@ func main() {
 	)
 
 	// Use middleware
-	srv.UseMiddleware(server.LoggingMiddleware(logger))
+	srv.UseMiddleware(corsMiddleware, server.LoggingMiddleware(logger))
 
 	// Register handlers
 	srv.HandleFunc("/add", handleAdd)
