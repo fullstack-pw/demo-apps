@@ -469,95 +469,20 @@ func handleAsciiHTML(w http.ResponseWriter, r *http.Request) {
 }
 
 func searchBingImages(ctx context.Context, query string) (string, error) {
+	chromePath := "/usr/bin/chromium-browser"
+	searchURL := "https://www.bing.com/images/search?q=" + url.QueryEscape(query)
 	// Create a span for tracing
 	ctx, span := tracer.Start(ctx, "bing.image_search", trace.WithAttributes(
 		attribute.String("search.query", query),
 	))
 	defer span.End()
+	logger.Info(ctx, "Initializing Chromium browser instance", "path", chromePath)
 
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/google-chrome" // Default path for our container
-	}
+	l := launcher.New().Headless(true).Bin(chromePath).NoSandbox(true).MustLaunch()
+	browser := rod.New().ControlURL(l).MustConnect().MustPage(searchURL)
+	defer browser.MustClose()
 
-	logger.Info(ctx, "Using Chrome binary from path for Bing search", "path", chromePath)
-	userAgent := "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-
-	// Create Chrome launcher
-	logger.Info(ctx, "Creating Chrome launcher for Bing search")
-	u, err := launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "").
-		Set("window-size", "1366,768"). // Typical laptop resolution
-		Set("user-agent", userAgent).
-		Set("accept-language", "en-US,en;q=0.9").
-		Launch()
-
-	if err != nil {
-		logger.Error(ctx, "Failed to launch Chrome for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Chrome launched successfully for Bing search", "control_url", u)
-
-	// Create browser instance
-	browser := rod.New().
-		ControlURL(u).
-		Timeout(30 * time.Second)
-
-	err = browser.Connect()
-	if err != nil {
-		logger.Error(ctx, "Failed to connect to Chrome for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully connected to browser for Bing search")
-	defer browser.Close()
-
-	// Create page
-	var page *rod.Page
-	err = rod.Try(func() {
-		page = browser.MustPage()
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to create page for Bing search", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Page created successfully for Bing search")
-
-	// Navigate to Bing Images search
-	searchURL := "https://www.bing.com/images/search?q=" + url.QueryEscape(query)
-	logger.Info(ctx, "Navigating to Bing search URL", "url", searchURL)
-
-	err = rod.Try(func() {
-		page.MustNavigate(searchURL)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to navigate to Bing URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully navigated to Bing URL", "url", searchURL)
-
-	// Wait for page to stabilize
-	err = rod.Try(func() {
-		err = page.WaitStable(2 * time.Second)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to wait for Bing page stability", "error", fmt.Sprintf("%v", err))
-	}
+	logger.Info(ctx, "Search Page created successfully")
 
 	// Try to handle cookie consent dialogs specific to Bing
 	consentButtonSelectors := []string{
@@ -571,7 +496,7 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 
 	for _, selector := range consentButtonSelectors {
 		err := rod.Try(func() {
-			el := page.MustElement(selector)
+			el := browser.MustElement(selector)
 			el.MustClick()
 			logger.Info(ctx, "Clicked Bing consent button", "selector", selector)
 		})
@@ -582,8 +507,8 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 
 	// Wait a bit for the page to load images
 	time.Sleep(1 * time.Second)
-	err = rod.Try(func() {
-		page.MustWaitLoad()
+	err := rod.Try(func() {
+		browser.MustWaitLoad()
 	})
 
 	if err != nil {
@@ -593,7 +518,7 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 	var imgURL string
 
 	err = rod.Try(func() {
-		html, err := page.HTML()
+		html, err := browser.HTML()
 		if err == nil {
 			// Look for image URLs in the page source
 			patterns := []string{
@@ -627,93 +552,22 @@ func searchBingImages(ctx context.Context, query string) (string, error) {
 }
 
 func searchGoogleImages(ctx context.Context, query string) (string, error) {
-	// Create a span for tracing
+	chromePath := "/usr/bin/chromium-browser"
+	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
+	var imgURL string
 	ctx, span := tracer.Start(ctx, "google.image_search", trace.WithAttributes(
 		attribute.String("search.query", query),
 	))
 	defer span.End()
 
-	// Find the Chrome binary path
-	chromePath := os.Getenv("CHROME_PATH")
-	if chromePath == "" {
-		chromePath = "/usr/bin/google-chrome" // Default path for our container
-	}
+	logger.Info(ctx, "Initializing Chromium browser instance", "path", chromePath)
 
-	logger.Info(ctx, "Using Chrome binary from path", "path", chromePath)
-
-	// Use a very basic approach - create a launcher with just essential flags
-	logger.Info(ctx, "Creating Chrome launcher")
-	u, err := launcher.New().
-		Bin(chromePath).
-		Headless(true).
-		Set("no-sandbox", "").
-		Set("disable-dev-shm-usage", "").
-		Set("disable-gpu", "").
-		Launch()
-
-	if err != nil {
-		logger.Error(ctx, "Failed to launch Chrome", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Chrome launched successfully", "control_url", u)
-
-	// Create browser instance
-	browser := rod.New().
-		ControlURL(u).
-		Timeout(30 * time.Second)
-
-	err = browser.Connect()
-	if err != nil {
-		logger.Error(ctx, "Failed to connect to Chrome", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully connected to browser")
+	l := launcher.New().Headless(true).Bin(chromePath).NoSandbox(true).MustLaunch()
+	browser := rod.New().ControlURL(l).MustConnect().MustPage(searchURL)
 	defer browser.MustClose()
 
-	// Create page
-	var page *rod.Page
-	err = rod.Try(func() {
-		page = browser.MustPage()
-	})
+	logger.Info(ctx, "Search Page created successfully")
 
-	if err != nil {
-		logger.Error(ctx, "Failed to create page", "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Page created successfully")
-
-	// Navigate to Google Images search
-	searchURL := "https://www.google.com/search?tbm=isch&q=" + url.QueryEscape(query)
-	logger.Info(ctx, "Navigating to search URL", "url", searchURL)
-
-	err = rod.Try(func() {
-		page.MustNavigate(searchURL)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to navigate to URL", "url", searchURL, "error", fmt.Sprintf("%v", err))
-		placeholderURL := fmt.Sprintf("https://via.placeholder.com/500x300/3498db/ffffff?text=%s", url.QueryEscape(query))
-		return placeholderURL, nil
-	}
-
-	logger.Info(ctx, "Successfully navigated to URL", "url", searchURL)
-
-	// Wait for page to stabilize
-	err = rod.Try(func() {
-		err = page.WaitStable(2 * time.Second)
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to wait for page stability", "error", fmt.Sprintf("%v", err))
-	}
-
-	// Try to handle cookie consent dialogs
 	consentButtonSelectors := []string{
 		"button#L2AGLb",
 		"[aria-label='Accept all']",
@@ -727,129 +581,87 @@ func searchGoogleImages(ctx context.Context, query string) (string, error) {
 
 	for _, selector := range consentButtonSelectors {
 		err := rod.Try(func() {
-			el := page.MustElement(selector)
+			el := browser.MustElement(selector)
 			el.MustClick()
-			logger.Info(ctx, "Clicked consent button", "selector", selector)
 		})
 		if err == nil {
+			logger.Info(ctx, "Clicked consent button", "selector", selector)
 			break
+		} else {
+			logger.Info(ctx, "Consent button not found, searching...", "selector", selector)
+			continue
 		}
 	}
-
-	// Wait a bit for the page to load images
-	time.Sleep(1 * time.Second)
-	err = rod.Try(func() {
-		page.MustWaitLoad()
-	})
-
-	if err != nil {
-		logger.Error(ctx, "Failed to wait for page load", "error", fmt.Sprintf("%v", err))
-	}
-
-	var imgURL string
-
-	err = rod.Try(func() {
-		elements, err := page.Elements("img[src^='data:image/']")
+	err := rod.Try(func() {
+		elements, err := browser.Elements("img[src^='data:image/']")
 		if err != nil {
 			logger.Error(ctx, "Failed to find base64 image elements", "error", err)
 			return
 		}
-		logger.Debug(ctx, "Found base64 images", "count", len(elements))
-		if len(elements) > 0 {
-			for i, el := range elements {
-				src, _ := el.Attribute("src")
-				alt, _ := el.Attribute("alt")
-				height, _ := el.Attribute("height")
-				width, _ := el.Attribute("width")
-				class, _ := el.Attribute("class")
-				id, _ := el.Attribute("id")
-				srcValue := "nil"
-				if src != nil {
-					if len(*src) > 100 {
-						srcValue = (*src)[:20] + "..."
-					} else {
-						srcValue = *src
+		logger.Info(ctx, "Found base64 images", "count", len(elements))
+		for i, el := range elements {
+			height, _ := el.Attribute("height")
+			width, _ := el.Attribute("width")
+			heightValue := "nil"
+			if height != nil {
+				heightValue = *height
+			}
+			widthValue := "nil"
+			if width != nil {
+				widthValue = *width
+			}
+			intheight, err := strconv.Atoi(heightValue)
+			if err != nil {
+				logger.Error(ctx, "Error trying to get image heigh", i)
+				continue
+			}
+			intwidth, err := strconv.Atoi(widthValue)
+			if err != nil {
+				logger.Error(ctx, "Error trying to get image width", i)
+				continue
+			}
+			if intheight < 100 || intwidth < 100 {
+				logger.Info(ctx, "Small element, skipping and selecting next one...")
+				continue
+			}
+
+			logger.Info(ctx, "Clicking on image to open full-size view")
+			err = rod.Try(func() {
+				el.MustClick()
+			})
+			if err != nil {
+				continue
+			}
+			logger.Info(ctx, "Successfully clicked first element")
+			browser.MustWaitLoad()
+
+			html, err := browser.HTML()
+			if err == nil {
+				imgURLPattern := `imgurl=(http[^&"]+)`
+				re := regexp.MustCompile(imgURLPattern)
+				matches := re.FindStringSubmatch(html)
+				if len(matches) > 1 {
+					encodedURL := matches[1]
+					decodedURL, err := url.QueryUnescape(encodedURL)
+					if err == nil {
+						imgURL = decodedURL
+						logger.Info(ctx, "Found image URL from HTML regex", "url", imgURL)
+						break
 					}
 				}
-				altValue := "nil"
-				if alt != nil {
-					altValue = *alt
-				}
-				heightValue := "nil"
-				if height != nil {
-					heightValue = *height
-				}
-				widthValue := "nil"
-				if width != nil {
-					widthValue = *width
-				}
-				classValue := "nil"
-				if class != nil {
-					classValue = *class
-				}
-				idValue := "nil"
-				if id != nil {
-					idValue = *id
-				}
-				html, _ := el.HTML()
-				intheight, err := strconv.Atoi(heightValue)
-				if err != nil {
-					logger.Error(ctx, "Error trying to get image heigh")
-				}
-				intwidth, err := strconv.Atoi(widthValue)
-				if err != nil {
-					logger.Error(ctx, "Error trying to get image width")
-				}
-				if intheight < 100 || intwidth < 100 {
-					logger.Debug(ctx, "Small element, skipping and selecting next one...")
-					continue
-				}
-				logger.Debug(ctx, "Image element details",
-					"index", i,
-					"src", srcValue,
-					"alt", altValue,
-					"height", heightValue,
-					"width", widthValue,
-					"class", classValue,
-					"id", idValue,
-					"html", html)
-
-				logger.Debug(ctx, "Clicking on image to open full-size view")
-				err = rod.Try(func() {
-					el.MustClick()
-				})
-				if err != nil {
-					break
-				}
-				logger.Debug(ctx, "Successfully clicked first element")
-				page.MustWaitLoad()
-
-				html, err = page.HTML()
-				if err == nil {
-					imgURLPattern := `imgurl=(http[^&"]+)`
-					re := regexp.MustCompile(imgURLPattern)
-					matches := re.FindStringSubmatch(html)
-					if len(matches) > 1 {
-						encodedURL := matches[1]
-						decodedURL, err := url.QueryUnescape(encodedURL)
-						if err == nil {
-							imgURL = decodedURL
-							logger.Debug(ctx, "Found image URL from HTML regex", "url", imgURL)
-							break
-						}
-					}
-				}
-				if imgURL != "" {
-					break
-				}
+			}
+			if imgURL != "" {
+				break
 			}
 		}
 	})
+
 	if err != nil {
-		logger.Error(ctx, "Failed to select base64 image element", "error", err)
+		logger.Error(ctx, "Failed to grep image URL", "error", err)
+	} else {
+		logger.Info(ctx, "Returning image URL", "url", imgURL)
 	}
 
-	logger.Info(ctx, "Returning image URL", "url", imgURL)
 	return imgURL, nil
 }
 
@@ -896,6 +708,8 @@ func main() {
 		logger.Fatal(ctx, "Failed to subscribe to result queue", "error", err)
 	}
 	defer sub.Unsubscribe()
+
+	logger.Info(ctx, "Successfully connected to global Chrome browser instance")
 
 	// Create a server with logging middleware
 	srv := server.NewServer("enqueuer",
