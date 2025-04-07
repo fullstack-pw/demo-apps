@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: enqueuer
-          image: registry.fullstack.pw/enqueuer:latest
+          image: harbor.fullstack.pw/library/enqueuer:latest
           ports:
             - containerPort: 8080
           env:
