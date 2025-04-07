@@ -12,7 +12,7 @@ This project demonstrates a modern microservices architecture that processes mes
 
 The system consists of multiple microservices communicating via message queues:
 
-![Arch](demo-apps.png)
+![Arch](demo-apps.svg)
 - **Communication**: NATS for message queuing
 - **Storage**: Redis for temporary storage, PostgreSQL for persistent storage
 - **Deployment**: Kubernetes with Kustomize configurations
