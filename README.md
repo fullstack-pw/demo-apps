@@ -6,6 +6,8 @@ A scalable, distributed system for processing and transforming messages with ima
 
 This project demonstrates a modern microservices architecture that processes messages through a pipeline of services. The system allows users to submit text descriptions, automatically finds relevant images, and transforms them into ASCII art representations.
 
+![Ascii gen](ascii.gif)
+
 ## System Architecture
 
 The system consists of multiple microservices communicating via message queues:
