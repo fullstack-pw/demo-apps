@@ -274,7 +274,9 @@ func subscribeToRedisChanges(ctx context.Context) {
 	patterns := []string{
 		"__keyevent@0__:set",
 		"__keyevent@0__:hset",
-		fmt.Sprintf("__keyspace@0__:%s:msg-*", env), // Environment-specific prefix
+		fmt.Sprintf("__keyspace@0__:%s:msg-*", env),
+		fmt.Sprintf("__keyspace@0__:%s:ascii-*-terminal", env),
+		fmt.Sprintf("__keyspace@0__:%s:ascii-*-html", env),
 	}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
 	defer func() {
