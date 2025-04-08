@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: ascii-frontend
-          image: registry.fullstack.pw/ascii-frontend:latest
+          image: harbor.fullstack.pw/library/ascii-frontend:latest
           ports:
             - containerPort: 80
           resources:

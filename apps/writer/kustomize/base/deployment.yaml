@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: writer
-          image: registry.fullstack.pw/writer:latest
+          image: harbor.fullstack.pw/library/writer:latest
           ports:
             - containerPort: 8080
           env:
