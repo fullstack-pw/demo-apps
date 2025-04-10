@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
         - name: memorizer
-          image: harbor.fullstack.pw/library/memorizer:latest
+          image: registry.fullstack.pw/library/memorizer:latest
           ports:
             - containerPort: 8080
           env:
