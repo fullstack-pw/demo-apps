@@ -1,0 +1,24 @@
+resources:
+  - ../../base
+
+patches:
+  - patch: |-
+      - op: replace
+        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
+        value: "stg.realstate-scrapper.fullstack.pw"
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: "stg.realstate-scrapper.fullstack.pw"
+      - op: replace
+        path: /spec/rules/0/host
+        value: "stg.realstate-scrapper.fullstack.pw"
+    target:
+      kind: Ingress
+      name: realstate-scrapper
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: "stg"
+    target:
+      kind: Deployment
+      name: realstate-scrapper
