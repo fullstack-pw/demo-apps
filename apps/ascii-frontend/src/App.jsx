@@ -48,8 +48,8 @@ function App() {
     try {
       // Get the current environment
       const hostname = window.location.hostname;
-      const isDevEnv = hostname.startsWith('dev.');
-      const isStgEnv = hostname.startsWith('stg.');
+      const isDevEnv = hostname.startsWith('dev');
+      const isStgEnv = hostname.startsWith('stg');
       const env = isDevEnv ? 'dev' : isStgEnv ? 'stg' : 'prod';
 
       // Construct the enqueuer URL based on environment
