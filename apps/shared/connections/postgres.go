@@ -21,13 +21,16 @@ type PostgresConnection struct {
 
 // PostgresConfig holds configuration for the PostgreSQL connection
 type PostgresConfig struct {
-	Host       string
-	Port       string
-	Database   string
-	User       string
-	Password   string
-	SSLMode    string
-	MaxRetries int
+	Host        string
+	Port        string
+	Database    string
+	User        string
+	Password    string
+	SSLMode     string
+	SSLRootCert string
+	SSLCert     string
+	SSLKey      string
+	MaxRetries  int
 }
 
 // DefaultPostgresConfig returns default PostgreSQL configuration from environment
@@ -39,6 +42,9 @@ func DefaultPostgresConfig() PostgresConfig {
 	dbUser := os.Getenv("DB_USER")
 	dbPassword := os.Getenv("DB_PASSWORD")
 	sslMode := os.Getenv("DB_SSLMODE")
+	sslRootCert := os.Getenv("PGSSLROOTCERT")
+	sslCert := os.Getenv("PGSSLCERT")
+	sslKey := os.Getenv("PGSSLKEY")
 
 	// Set defaults if not provided
 	if dbHost == "" {
@@ -58,13 +64,16 @@ func DefaultPostgresConfig() PostgresConfig {
 	}
 
 	return PostgresConfig{
-		Host:       dbHost,
-		Port:       dbPort,
-		Database:   dbName,
-		User:       dbUser,
-		Password:   dbPassword,
-		SSLMode:    sslMode,
-		MaxRetries: 5,
+		Host:        dbHost,
+		Port:        dbPort,
+		Database:    dbName,
+		User:        dbUser,
+		Password:    dbPassword,
+		SSLMode:     sslMode,
+		SSLRootCert: sslRootCert,
+		SSLCert:     sslCert,
+		SSLKey:      sslKey,
+		MaxRetries:  5,
 	}
 }
 
@@ -75,6 +84,17 @@ func NewPostgresConnection(cfg PostgresConfig) *PostgresConnection {
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Database, cfg.SSLMode,
 	)
+
+	// Add SSL certificate paths if provided
+	if cfg.SSLRootCert != "" {
+		connStr += fmt.Sprintf(" sslrootcert=%s", cfg.SSLRootCert)
+	}
+	if cfg.SSLCert != "" {
+		connStr += fmt.Sprintf(" sslcert=%s", cfg.SSLCert)
+	}
+	if cfg.SSLKey != "" {
+		connStr += fmt.Sprintf(" sslkey=%s", cfg.SSLKey)
+	}
 
 	return &PostgresConnection{
 		connString: connStr,
