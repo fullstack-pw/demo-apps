@@ -12,18 +12,6 @@ spec:
       labels:
         app: writer
     spec:
-      volumes:
-        - name: postgres-certs
-          secret:
-            secretName: cluster-secrets
-            items:
-              - key: POSTGRES_SSL_CA
-                path: ca.crt
-              - key: POSTGRES_SSL_CERT
-                path: client.crt
-              - key: POSTGRES_SSL_KEY
-                path: client.key
-            defaultMode: 0600
       containers:
         - name: writer
           image: registry.fullstack.pw/library/writer:latest
@@ -50,16 +38,6 @@ spec:
               value: "dev.postgres.fullstack.pw"
             - name: DB_SSLMODE
               value: "require"
-            - name: PGSSLROOTCERT
-              value: "/etc/postgres-certs/ca.crt"
-            - name: PGSSLCERT
-              value: "/etc/postgres-certs/client.crt"
-            - name: PGSSLKEY
-              value: "/etc/postgres-certs/client.key"
-          volumeMounts:
-            - name: postgres-certs
-              mountPath: /etc/postgres-certs
-              readOnly: true
           resources:
             requests:
               cpu: 100m
