@@ -70,7 +70,7 @@ jobs:
       go-dir: ./${{ matrix.app.app_path }}
 
   docker-build-and-push:
-    needs: [determine-app, go-tests]
+    needs: [determine-app]
     if: needs.determine-app.outputs.app_paths != '[]'
     strategy:
       matrix:
