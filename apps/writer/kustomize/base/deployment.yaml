@@ -19,7 +19,7 @@ spec:
             - containerPort: 8080
           env:
             - name: ENV
-              value: "env"
+              value: "dev"
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: opentelemetry-collector.observability.svc.cluster.local:4317
             - name: QUEUE_NAMES
@@ -29,10 +29,12 @@ spec:
                 secretKeyRef:
                   name: cluster-secrets
                   key: REDIS_PASSWORD
+            - name: DB_USER
+              value: "appuser"
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: postgres-credentials
+                  name: postgres-app-credentials
                   key: password
             - name: DB_HOST
               value: "dev.postgres.fullstack.pw"

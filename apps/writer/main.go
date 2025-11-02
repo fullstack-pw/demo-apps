@@ -274,9 +274,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 	patterns := []string{
 		"__keyevent@0__:set",
 		"__keyevent@0__:hset",
-		fmt.Sprintf("__keyspace@0__:%s:msg-*", env),
-		fmt.Sprintf("__keyspace@0__:%s:ascii-*-terminal", env),
-		fmt.Sprintf("__keyspace@0__:%s:ascii-*-html", env),
+		fmt.Sprintf("__keyspace@0__:%s:*", env),
 	}
 	pubsub := redisConn.SubscribeToKeyspace(ctx, patterns...)
 	defer func() {
@@ -327,7 +325,7 @@ func subscribeToRedisChanges(ctx context.Context) {
 			// Check if key has our environment prefix for keyevent notifications
 			if strings.Contains(msg.Channel, "__keyevent@0__:") {
 				// For keyevent notifications, make sure the key has our environment prefix
-				expectedPrefix := fmt.Sprintf("%s:msg-", env)
+				expectedPrefix := fmt.Sprintf("%s:", env)
 				if !strings.HasPrefix(key, expectedPrefix) {
 					logger.Debug(ctx, "Ignoring key from different environment",
 						"key", key,
@@ -339,9 +337,10 @@ func subscribeToRedisChanges(ctx context.Context) {
 
 			// For keyspace events, we already filtered by pattern with the environment prefix
 
-			// Only process keys with our message prefix pattern
-			if !strings.Contains(key, ":msg-") {
-				logger.Debug(ctx, "Ignoring key without msg- pattern", "key", key)
+			// Skip ASCII art keys - we only want to process the main message keys
+			// ASCII art keys are fetched separately when processing the message
+			if strings.Contains(key, ":ascii:") {
+				logger.Debug(ctx, "Ignoring ASCII art key", "key", key)
 				continue
 			}
 
