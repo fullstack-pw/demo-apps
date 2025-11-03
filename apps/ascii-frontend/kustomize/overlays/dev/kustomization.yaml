@@ -7,14 +7,8 @@ resources:
 patches:
   - patch: |-
       - op: replace
-        path: /metadata/annotations/external-dns.alpha.kubernetes.io~1hostname
-        value: "dev.ascii.fullstack.pw"
-      - op: replace
-        path: /spec/tls/0/hosts/0
-        value: "dev.ascii.fullstack.pw"
-      - op: replace
-        path: /spec/rules/0/host
+        path: /spec/hosts/0
         value: "dev.ascii.fullstack.pw"
     target:
-      kind: Ingress
+      kind: VirtualService
       name: ascii-frontend

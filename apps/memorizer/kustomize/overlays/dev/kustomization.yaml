@@ -23,3 +23,10 @@ patches:
     target:
       kind: Deployment
       name: memorizer
+  - patch: |-
+      - op: replace
+        path: /spec/hosts/0
+        value: "dev.memorizer.fullstack.pw"
+    target:
+      kind: VirtualService
+      name: ascii-frontend

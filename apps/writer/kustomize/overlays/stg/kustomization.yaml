@@ -12,3 +12,10 @@ patches:
     target:
       kind: Deployment
       name: writer
+  - patch: |-
+      - op: replace
+        path: /spec/hosts/0
+        value: "stg.writer.fullstack.pw"
+    target:
+      kind: VirtualService
+      name: ascii-frontend
