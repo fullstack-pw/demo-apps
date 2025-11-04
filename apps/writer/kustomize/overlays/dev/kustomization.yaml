@@ -29,4 +29,4 @@ patches:
         value: "dev.writer.fullstack.pw"
     target:
       kind: VirtualService
-      name: ascii-frontend
+      name: writer

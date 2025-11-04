@@ -1,12 +1,12 @@
 apiVersion: networking.istio.io/v1beta1
 kind: VirtualService
 metadata:
-  name: enqueuer
+  name: writer
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   hosts:
-    - "dev.enqueuer.fullstack.pw"
+    - "dev.writer.fullstack.pw"
   gateways:
     - istio-system/default-gateway
   http:
@@ -15,6 +15,6 @@ spec:
             prefix: /
       route:
         - destination:
-            host: enqueuer.default.svc.cluster.local
+            host: writer.default.svc.cluster.local
             port:
               number: 8080

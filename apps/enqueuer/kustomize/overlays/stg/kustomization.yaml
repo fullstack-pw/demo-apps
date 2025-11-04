@@ -8,7 +8,7 @@ patches:
         value: "stg.enqueuer.fullstack.pw"
     target:
       kind: VirtualService
-      name: ascii-frontend
+      name: enqueuer
   - patch: |-
       - op: replace
         path: /spec/template/spec/containers/0/env/2/value
