@@ -17,4 +17,4 @@ spec:
         - destination:
             host: enqueuer.default.svc.cluster.local
             port:
-              number: 8080
+              number: 80
