@@ -40,7 +40,7 @@ spec:
                   name: cluster-secrets
                   key: POSTGRES_PASSWORD
             - name: DB_HOST
-              value: "dev.postgres.fullstack.pw"
+              value: "postgres-postgresql.dev-postgres.svc.cluster.local"
             - name: DB_SSLMODE
               value: "require"
           resources:
