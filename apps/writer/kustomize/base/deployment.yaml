@@ -32,15 +32,15 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: cluster-secrets
-                  key: POSTGRES_USER
+                  name: dev-postgres-credentials
+                  key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: cluster-secrets
-                  key: POSTGRES_PASSWORD
+                  name: dev-postgres-credentials
+                  key: password
             - name: DB_HOST
-              value: "postgres-postgresql.dev-postgres.svc.cluster.local"
+              value: "dev-postgres-rw.dev-postgres.svc.cluster.local"
             - name: DB_SSLMODE
               value: "require"
           resources:
