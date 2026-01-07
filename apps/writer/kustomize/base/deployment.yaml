@@ -32,12 +32,12 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: dev-postgres-credentials
+                  name: dev-postgres-app
                   key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: dev-postgres-credentials
+                  name: dev-postgres-app
                   key: password
             - name: DB_HOST
               value: "dev-postgres-rw.dev-postgres.svc.cluster.local"
