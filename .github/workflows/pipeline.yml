@@ -81,6 +81,42 @@ jobs:
       app-context: "./apps"
       app-name: "${{ matrix.app.app_name }}"
       app-dockerfile: "./apps/${{ matrix.app.app_name }}/Dockerfile"
+
+  update-dev-kustomization:
+    needs: [determine-app, docker-build-and-push]
+    if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    strategy:
+      matrix:
+        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+    name: Deploy ${{ matrix.app.app_name }} to dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Update dev kustomization with new image tag
+        run: |
+          # Use full SHA to match the Docker tag from build-and-push.yml
+          VERSION="${{ github.sha }}"
+          KUSTOMIZATION_FILE="apps/${{ matrix.app.app_name }}/kustomize/overlays/dev/kustomization.yaml"
+
+          if [ ! -f "$KUSTOMIZATION_FILE" ]; then
+            echo "Warning: $KUSTOMIZATION_FILE not found, skipping"
+            exit 0
+          fi
+
+          echo "Updating ${{ matrix.app.app_name }} dev to version: $VERSION"
+          sed -i "s/newTag: .*/newTag: $VERSION/" "$KUSTOMIZATION_FILE"
+
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          git add "$KUSTOMIZATION_FILE"
+          git commit -m "chore(${{ matrix.app.app_name }}): deploy $VERSION to dev [skip ci]" || echo "No changes to commit"
+          git push || echo "Nothing to push"
+
 #   dev-deploy:
 #     needs: [determine-app, docker-build-and-push]
 #     if: needs.determine-app.outputs.app_paths != '[]'
