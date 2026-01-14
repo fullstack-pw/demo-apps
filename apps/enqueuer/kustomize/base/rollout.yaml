@@ -46,3 +46,13 @@ spec:
       previewService: enqueuer-preview
       autoPromotionEnabled: false
       scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: cypress-tests
+        args:
+          - name: app-name
+            value: enqueuer
+          - name: app-url
+            value: "https://dev.enqueuer.fullstack.pw"
+          - name: environment
+            value: "dev"
