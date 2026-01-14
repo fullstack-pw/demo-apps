@@ -14,17 +14,6 @@ patches:
       name: memorizer
   - patch: |-
       - op: replace
-        path: /spec/strategy
-        value:
-          type: RollingUpdate
-          rollingUpdate:
-            maxSurge: 100%
-            maxUnavailable: 50%
-    target:
-      kind: Rollout
-      name: memorizer
-  - patch: |-
-      - op: replace
         path: /spec/hosts/0
         value: "dev.memorizer.fullstack.pw"
     target:
