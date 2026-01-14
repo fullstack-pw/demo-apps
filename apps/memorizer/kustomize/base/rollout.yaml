@@ -51,3 +51,13 @@ spec:
       previewService: memorizer-preview
       autoPromotionEnabled: false
       scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: cypress-tests
+        args:
+          - name: app-name
+            value: memorizer
+          - name: app-url
+            value: "https://dev.memorizer.fullstack.pw"
+          - name: environment
+            value: "dev"

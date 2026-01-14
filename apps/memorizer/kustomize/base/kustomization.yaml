@@ -3,5 +3,6 @@ resources:
   - service-preview.yaml
   - service.yaml
   - virtualservice.yaml
+  - analysis-template.yaml
 
 namespace: default

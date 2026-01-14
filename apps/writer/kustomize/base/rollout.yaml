@@ -67,3 +67,13 @@ spec:
       previewService: writer-preview
       autoPromotionEnabled: false
       scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: cypress-tests
+        args:
+          - name: app-name
+            value: writer
+          - name: app-url
+            value: "https://dev.writer.fullstack.pw"
+          - name: environment
+            value: "dev"

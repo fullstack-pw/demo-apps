@@ -42,3 +42,13 @@ spec:
       previewService: ascii-frontend-preview
       autoPromotionEnabled: false
       scaleDownDelaySeconds: 30
+      prePromotionAnalysis:
+        templates:
+          - templateName: cypress-tests
+        args:
+          - name: app-name
+            value: ascii-frontend
+          - name: app-url
+            value: "https://dev.ascii-frontend.fullstack.pw"
+          - name: environment
+            value: "dev"
