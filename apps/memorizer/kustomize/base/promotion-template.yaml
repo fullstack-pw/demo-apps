@@ -60,6 +60,7 @@ spec:
                         git add "$PROD_KUSTOMIZATION"
                         git commit -m "chore({{args.app-name}}): auto-promote $DEV_TAG to prod [skip ci]"
 
+
                         # Push using GitHub token
                         git push https://${GITHUB_TOKEN}@github.com/fullstack-pw/demo-apps.git main
 
