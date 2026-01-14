@@ -1,0 +1,57 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: cypress-tests
+spec:
+  args:
+    - name: app-name
+    - name: app-url
+    - name: environment
+      value: "dev"
+  metrics:
+    - name: cypress-tests
+      provider:
+        job:
+          spec:
+            backoffLimit: 1
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: cypress
+                    image: cypress/included:13.6.4
+                    workingDir: /e2e
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        set -e
+                        echo "Running Cypress tests for {{args.app-name}} at {{args.app-url}}"
+
+                        # Clone the demo-apps repository
+                        apk add --no-cache git
+                        git clone https://github.com/fullstack-pw/demo-apps.git /demo-apps
+                        cd /demo-apps
+
+                        # Install dependencies
+                        npm ci
+
+                        # Set environment variables for Cypress
+                        export TEST_ENV={{args.environment}}
+                        export ENQUEUER_URL={{args.app-url}}
+
+                        # Run Cypress tests
+                        npx cypress run --spec "cypress/e2e/{{args.app-name}}.cy.js" --env ENQUEUER_URL={{args.app-url}}
+
+                        # Check exit code
+                        EXIT_CODE=$?
+                        if [ $EXIT_CODE -eq 0 ]; then
+                          echo "✓ Cypress tests passed"
+                          exit 0
+                        else
+                          echo "✗ Cypress tests failed"
+                          exit 1
+                        fi
+                    env:
+                      - name: CYPRESS_CACHE_FOLDER
+                        value: /tmp/.cache/Cypress
