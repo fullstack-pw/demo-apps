@@ -1,6 +1,10 @@
 resources:
   - ../../base
 
+images:
+  - name: registry.fullstack.pw/library/enqueuer
+    newTag: v0.9.0
+
 patches:
   - patch: |-
       - op: replace
@@ -13,6 +17,12 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/env/2/value
         value: "prod"
+    target:
+      kind: Rollout
+      name: enqueuer
+  - patch: |-
+      - op: remove
+        path: /spec/strategy/blueGreen/prePromotionAnalysis
     target:
       kind: Rollout
       name: enqueuer

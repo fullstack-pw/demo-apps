@@ -1,6 +1,10 @@
 resources:
   - ../../base
 
+images:
+  - name: registry.fullstack.pw/library/writer
+    newTag: v0.9.0
+
 patches:
   - patch: |-
       - op: replace
@@ -18,4 +22,10 @@ patches:
         value: "writer.fullstack.pw"
     target:
       kind: VirtualService
+      name: writer
+  - patch: |-
+      - op: remove
+        path: /spec/strategy/blueGreen/prePromotionAnalysis
+    target:
+      kind: Rollout
       name: writer

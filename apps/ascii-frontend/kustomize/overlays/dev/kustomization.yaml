@@ -4,6 +4,10 @@ kind: Kustomization
 resources:
   - ../../base
 
+images:
+  - name: registry.fullstack.pw/library/ascii-frontend
+    newTag: v1.0.0
+
 patches:
   - patch: |-
       - op: replace

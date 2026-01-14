@@ -1,6 +1,10 @@
 resources:
   - ../../base
 
+images:
+  - name: registry.fullstack.pw/library/enqueuer
+    newTag: v1.0.0
+
 patches:
   - patch: |-
       - op: replace

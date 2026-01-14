@@ -4,6 +4,10 @@ kind: Kustomization
 resources:
   - ../../base
 
+images:
+  - name: registry.fullstack.pw/library/ascii-frontend
+    newTag: v0.9.0
+
 patches:
   - patch: |-
       - op: replace
@@ -16,6 +20,12 @@ patches:
       - op: replace
         path: /spec/replicas
         value: 2
+    target:
+      kind: Rollout
+      name: ascii-frontend
+  - patch: |-
+      - op: remove
+        path: /spec/strategy/blueGreen/prePromotionAnalysis
     target:
       kind: Rollout
       name: ascii-frontend
