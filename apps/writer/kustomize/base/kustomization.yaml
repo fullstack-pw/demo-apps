@@ -1,6 +1,7 @@
 resources:
-  - deployment.yaml
+  - rollout.yaml
   - service.yaml
+  - service-preview.yaml
   - virtualservice.yaml
 
 namespace: default

@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: ascii-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ascii-frontend
+  template:
+    metadata:
+      labels:
+        app: ascii-frontend
+    spec:
+      containers:
+        - name: ascii-frontend
+          image: registry.fullstack.pw/library/ascii-frontend:latest
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+  strategy:
+    blueGreen:
+      activeService: ascii-frontend
+      previewService: ascii-frontend-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 30

@@ -10,7 +10,7 @@ patches:
         path: /spec/template/spec/containers/0/env/2/value
         value: "queue-prod"
     target:
-      kind: Deployment
+      kind: Rollout
       name: memorizer
   - patch: |-
       - op: replace

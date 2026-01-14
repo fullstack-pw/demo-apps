@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: enqueuer-preview
+spec:
+  selector:
+    app: enqueuer
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP

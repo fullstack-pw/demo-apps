@@ -10,7 +10,7 @@ patches:
         path: /spec/template/spec/containers/0/env/2/value
         value: "queue-dev"
     target:
-      kind: Deployment
+      kind: Rollout
       name: memorizer
   - patch: |-
       - op: replace
@@ -21,7 +21,7 @@ patches:
             maxSurge: 100%
             maxUnavailable: 50%
     target:
-      kind: Deployment
+      kind: Rollout
       name: memorizer
   - patch: |-
       - op: replace
