@@ -29,19 +29,19 @@ spec:
                         echo "Running Cypress tests for {{args.app-name}} at {{args.app-url}}"
 
                         # Clone the demo-apps repository
-                        apt-get update && apt-get install -y git
+                        apt-get update -o Acquire::AllowInsecureRepositories=true || true
+                        apt-get install -y git --allow-unauthenticated
                         git clone https://github.com/fullstack-pw/demo-apps.git /demo-apps
                         cd /demo-apps
 
                         # Install dependencies
                         npm ci
 
-                        # Set environment variables for Cypress
-                        export TEST_ENV={{args.environment}}
-                        export ENQUEUER_URL={{args.app-url}}
-
                         # Run Cypress tests
-                        npx cypress run --spec "cypress/e2e/{{args.app-name}}.cy.js" --env ENQUEUER_URL={{args.app-url}}
+                        npx cypress run \
+                          --spec "cypress/e2e/{{args.app-name}}.cy.js" \
+                          --env ENQUEUER_URL={{args.app-url}},TEST_ENV={{args.environment}} \
+                          --config baseUrl={{args.app-url}}
 
                         # Check exit code
                         EXIT_CODE=$?
