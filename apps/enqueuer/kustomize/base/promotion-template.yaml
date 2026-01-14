@@ -5,7 +5,6 @@ metadata:
 spec:
   args:
     - name: app-name
-    - name: image-tag
   metrics:
     - name: promote-to-prod
       provider:
@@ -36,25 +35,30 @@ spec:
                         git clone https://github.com/fullstack-pw/demo-apps.git /workspace
                         cd /workspace
 
-                        # Update prod overlay kustomization with new image tag
-                        KUSTOMIZATION_FILE="apps/{{args.app-name}}/kustomize/overlays/prod/kustomization.yaml"
+                        # Get the current dev version (the version that just passed tests)
+                        DEV_KUSTOMIZATION="apps/{{args.app-name}}/kustomize/overlays/dev/kustomization.yaml"
+                        PROD_KUSTOMIZATION="apps/{{args.app-name}}/kustomize/overlays/prod/kustomization.yaml"
+
+                        DEV_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$DEV_KUSTOMIZATION" | grep "newTag:" | awk '{print $2}')
+                        PROD_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$PROD_KUSTOMIZATION" | grep "newTag:" | awk '{print $2}')
+
+                        echo "Dev is at version: $DEV_TAG"
+                        echo "Prod is at version: $PROD_TAG"
 
                         # Check if already at this version
-                        CURRENT_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$KUSTOMIZATION_FILE" | grep "newTag:" | awk '{print $2}')
-
-                        if [ "$CURRENT_TAG" = "{{args.image-tag}}" ]; then
-                          echo "Production is already at version {{args.image-tag}}, skipping promotion"
+                        if [ "$PROD_TAG" = "$DEV_TAG" ]; then
+                          echo "Production is already at version $DEV_TAG, skipping promotion"
                           exit 0
                         fi
 
-                        echo "Updating prod from $CURRENT_TAG to {{args.image-tag}}"
+                        echo "Promoting $PROD_TAG -> $DEV_TAG"
 
-                        # Update the image tag in kustomization
-                        sed -i "s/newTag: .*/newTag: {{args.image-tag}}/" "$KUSTOMIZATION_FILE"
+                        # Update the image tag in prod kustomization
+                        sed -i "s/newTag: .*/newTag: $DEV_TAG/" "$PROD_KUSTOMIZATION"
 
                         # Commit and push
-                        git add "$KUSTOMIZATION_FILE"
-                        git commit -m "chore({{args.app-name}}): auto-promote v{{args.image-tag}} to prod
+                        git add "$PROD_KUSTOMIZATION"
+                        git commit -m "chore({{args.app-name}}): auto-promote $DEV_TAG to prod
 
 Automatically promoted after successful Cypress tests in dev."
 
@@ -67,5 +71,5 @@ Automatically promoted after successful Cypress tests in dev."
                       - name: GITHUB_TOKEN
                         valueFrom:
                           secretKeyRef:
-                            name: github-promotion-token
-                            key: token
+                            name: cluster-secrets
+                            key: github_token

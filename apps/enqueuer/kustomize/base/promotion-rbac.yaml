@@ -3,14 +3,3 @@ kind: ServiceAccount
 metadata:
   name: promotion-sa
   namespace: default
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: github-promotion-token
-  namespace: default
-type: Opaque
-stringData:
-  # TODO: Replace with actual GitHub Personal Access Token with repo write access
-  # This secret should be managed via SOPS or External Secrets in production
-  token: "REPLACE_WITH_GITHUB_PAT"
