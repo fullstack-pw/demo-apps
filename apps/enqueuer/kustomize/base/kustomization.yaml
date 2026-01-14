@@ -3,6 +3,6 @@ resources:
   - service.yaml
   - service-preview.yaml
   - virtualservice.yaml
-  - ../../shared/cypress-analysis-template.yaml
+  - ../../../shared/cypress-analysis-template.yaml
 
 namespace: default
