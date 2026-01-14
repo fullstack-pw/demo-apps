@@ -1,0 +1,71 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: promote-to-prod
+spec:
+  args:
+    - name: app-name
+    - name: image-tag
+  metrics:
+    - name: promote-to-prod
+      provider:
+        job:
+          spec:
+            backoffLimit: 2
+            template:
+              spec:
+                restartPolicy: Never
+                serviceAccountName: promotion-sa
+                containers:
+                  - name: git-promotion
+                    image: alpine/git:latest
+                    workingDir: /workspace
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        set -e
+
+                        echo "Promoting {{args.app-name}} version {{args.image-tag}} to production"
+
+                        # Configure git
+                        git config --global user.name "Argo Rollouts Auto-Promotion"
+                        git config --global user.email "noreply@fullstack.pw"
+
+                        # Clone repository
+                        git clone https://github.com/fullstack-pw/demo-apps.git /workspace
+                        cd /workspace
+
+                        # Update prod overlay kustomization with new image tag
+                        KUSTOMIZATION_FILE="apps/{{args.app-name}}/kustomize/overlays/prod/kustomization.yaml"
+
+                        # Check if already at this version
+                        CURRENT_TAG=$(grep -A1 "name: registry.fullstack.pw/library/{{args.app-name}}" "$KUSTOMIZATION_FILE" | grep "newTag:" | awk '{print $2}')
+
+                        if [ "$CURRENT_TAG" = "{{args.image-tag}}" ]; then
+                          echo "Production is already at version {{args.image-tag}}, skipping promotion"
+                          exit 0
+                        fi
+
+                        echo "Updating prod from $CURRENT_TAG to {{args.image-tag}}"
+
+                        # Update the image tag in kustomization
+                        sed -i "s/newTag: .*/newTag: {{args.image-tag}}/" "$KUSTOMIZATION_FILE"
+
+                        # Commit and push
+                        git add "$KUSTOMIZATION_FILE"
+                        git commit -m "chore({{args.app-name}}): auto-promote v{{args.image-tag}} to prod
+
+Automatically promoted after successful Cypress tests in dev."
+
+                        # Push using GitHub token
+                        git push https://${GITHUB_TOKEN}@github.com/fullstack-pw/demo-apps.git main
+
+                        echo "Successfully promoted {{args.app-name}} to production"
+                        exit 0
+                    env:
+                      - name: GITHUB_TOKEN
+                        valueFrom:
+                          secretKeyRef:
+                            name: github-promotion-token
+                            key: token

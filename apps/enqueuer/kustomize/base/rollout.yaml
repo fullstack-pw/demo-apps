@@ -58,3 +58,11 @@ spec:
             value: "https://dev.enqueuer.fullstack.pw"
           - name: environment
             value: "dev"
+      postPromotionAnalysis:
+        templates:
+          - templateName: promote-to-prod
+        args:
+          - name: app-name
+            value: enqueuer
+          - name: image-tag
+            value: v1.0.0
