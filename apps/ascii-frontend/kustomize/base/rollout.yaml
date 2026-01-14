@@ -52,3 +52,9 @@ spec:
             value: "https://dev.ascii-frontend.fullstack.pw"
           - name: environment
             value: "dev"
+      postPromotionAnalysis:
+        templates:
+          - templateName: promote-to-prod
+        args:
+          - name: app-name
+            value: ascii-frontend

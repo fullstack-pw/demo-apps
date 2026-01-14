@@ -7,5 +7,7 @@ resources:
   - service.yaml
   - virtualservice.yaml
   - analysis-template.yaml
+  - promotion-template.yaml
+  - promotion-rbac.yaml
 
 namespace: default
