@@ -11,6 +11,8 @@ spec:
     metadata:
       labels:
         app: enqueuer
+      annotations:
+        rollout-restart: "2026-01-14-06-25"
     spec:
       containers:
         - name: enqueuer
