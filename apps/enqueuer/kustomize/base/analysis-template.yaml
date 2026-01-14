@@ -29,7 +29,7 @@ spec:
                         echo "Running Cypress tests for {{args.app-name}} at {{args.app-url}}"
 
                         # Clone the demo-apps repository
-                        apk add --no-cache git
+                        apt-get update && apt-get install -y git
                         git clone https://github.com/fullstack-pw/demo-apps.git /demo-apps
                         cd /demo-apps
 
