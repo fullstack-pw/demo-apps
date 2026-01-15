@@ -25,7 +25,7 @@ spec:
                       - |
                         set -e
 
-                        echo "Promoting {{args.app-name}} version {{args.image-tag}} to production"
+                        echo "Promoting {{args.app-name}} to production"
 
                         # Configure git
                         git config --global user.name "Argo Rollouts Auto-Promotion"
