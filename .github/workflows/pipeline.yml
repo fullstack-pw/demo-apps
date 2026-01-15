@@ -16,6 +16,9 @@ on:
     paths:
       - "apps/**"
 
+permissions:
+  contents: write
+
 jobs:
   determine-app:
     runs-on: self-hosted
