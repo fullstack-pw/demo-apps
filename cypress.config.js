@@ -77,7 +77,8 @@ module.exports = defineConfig({
 
             // Determine which spec files to run based on the environment
             console.log("Using accessibleSpecPattern to filter specs");
-            config.specPattern = ['cypress/e2e/enqueuer.cy.js', 'cypress/e2e/pipeline-tests.cy.js'];
+            // Don't override specPattern - allow CLI --spec parameter to take precedence
+            // config.specPattern = ['cypress/e2e/enqueuer.cy.js', 'cypress/e2e/pipeline-tests.cy.js'];
 
             return config;
         },
