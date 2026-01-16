@@ -8,7 +8,7 @@ describe('CKS Backend API Tests', () => {
             failOnStatusCode: false,
         }).then((response) => {
             expect(response.status).to.equal(200);
-            expect(response.body).to.have.property('status', 'healthy');
+            expect(response.body).to.have.property('status', 'ok');
         });
     });
 
@@ -33,7 +33,7 @@ describe('CKS Backend API Tests', () => {
             failOnStatusCode: false,
         }).then((response) => {
             expect(response.status).to.be.oneOf([200, 201]);
-            expect(response.body).to.have.property('id');
+            expect(response.body).to.have.property('sessionId');
         });
     });
 
