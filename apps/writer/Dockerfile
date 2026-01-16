@@ -32,4 +32,3 @@ COPY --from=builder /build/writer/main .
 EXPOSE 8080
 
 CMD ["./main"]
-
