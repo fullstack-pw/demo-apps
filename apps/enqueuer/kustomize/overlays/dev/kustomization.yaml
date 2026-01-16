@@ -3,7 +3,7 @@ resources:
 
 images:
   - name: registry.fullstack.pw/library/enqueuer
-    newTag: fbc3cf77de541cc06f807462d02617568597daea
+    newTag: c3aee75564059e84ccfd7b83b6cb863518f7167c
 
 patches:
   - patch: |-
