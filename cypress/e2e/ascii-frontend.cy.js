@@ -1,5 +1,5 @@
 describe('ASCII Frontend Tests', () => {
-    const frontendUrl = Cypress.env('ASCII_FRONTEND_URL') || 'https://dev.ascii-frontend.fullstack.pw';
+    const frontendUrl = Cypress.env('ASCII_FRONTEND_URL') || 'https://dev.ascii.fullstack.pw';
 
     it('should load the homepage', () => {
         cy.request({
