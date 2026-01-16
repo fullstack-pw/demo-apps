@@ -299,23 +299,27 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	// Get current trace ID for correlation
 	traceID := tracing.GetTraceID(ctx)
 
-	var asciiTerminal, asciiHTML string
 	timeout := 30 * time.Second // Adjust timeout as needed
 
 	// Wait for ASCII results
 	result, err := responseCache.GetWithTimeout(traceID, timeout)
 	if err != nil {
 		logger.Warn(ctx, "Timed out waiting for ASCII results", "error", err)
-	} else {
-		logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
+		http.Error(w, "Timed out waiting for ASCII processing", http.StatusGatewayTimeout)
+		return
 	}
+	logger.Info(ctx, "Received ASCII results", "trace_id", traceID)
+
+	// Safe type assertions with fallback
+	asciiTerminal, _ := result["ascii_terminal"].(string)
+	asciiHTML, _ := result["ascii_html"].(string)
 
 	response := map[string]string{
 		"status":           "completed",
 		"queue":            queueName, // Return the original queue name to the client
 		"image_url":        imageURL,
-		"image_ascii_text": result["ascii_terminal"].(string),
-		"image_ascii_html": result["ascii_html"].(string),
+		"image_ascii_text": asciiTerminal,
+		"image_ascii_html": asciiHTML,
 	}
 
 	// Return full response
