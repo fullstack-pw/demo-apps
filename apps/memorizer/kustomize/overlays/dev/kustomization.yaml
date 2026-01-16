@@ -3,7 +3,7 @@ resources:
 
 images:
   - name: registry.fullstack.pw/library/memorizer
-    newTag: 9e52e956586c4f25ca83a56e5c90ff250ef4e52f
+    newTag: 15310cb46cfcc5d33372a329268e66f58b3da372
 
 patches:
   - patch: |-
