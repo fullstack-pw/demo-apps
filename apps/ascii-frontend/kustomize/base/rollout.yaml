@@ -40,7 +40,7 @@ spec:
     blueGreen:
       activeService: ascii-frontend
       previewService: ascii-frontend-preview
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
       scaleDownDelaySeconds: 30
       prePromotionAnalysis:
         templates:

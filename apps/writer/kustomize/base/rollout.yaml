@@ -65,7 +65,7 @@ spec:
     blueGreen:
       activeService: writer
       previewService: writer-preview
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
       scaleDownDelaySeconds: 30
       prePromotionAnalysis:
         templates:

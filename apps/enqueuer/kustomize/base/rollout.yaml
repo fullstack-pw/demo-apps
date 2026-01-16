@@ -46,7 +46,7 @@ spec:
     blueGreen:
       activeService: enqueuer
       previewService: enqueuer-preview
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
       scaleDownDelaySeconds: 30
       prePromotionAnalysis:
         templates:

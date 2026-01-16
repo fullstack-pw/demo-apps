@@ -49,7 +49,7 @@ spec:
     blueGreen:
       activeService: memorizer
       previewService: memorizer-preview
-      autoPromotionEnabled: false
+      autoPromotionEnabled: true
       scaleDownDelaySeconds: 30
       prePromotionAnalysis:
         templates:
