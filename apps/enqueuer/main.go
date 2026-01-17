@@ -437,7 +437,9 @@ func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Return the ASCII art
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(terminal))
+	if _, err := w.Write([]byte(terminal)); err != nil {
+		logger.Error(ctx, "Failed to write ASCII terminal response", "error", err)
+	}
 }
 
 // handleAsciiHTML returns the HTML ASCII art
@@ -469,7 +471,9 @@ func handleAsciiHTML(w http.ResponseWriter, r *http.Request) {
 
 	// Return the ASCII HTML
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(html))
+	if _, err := w.Write([]byte(html)); err != nil {
+		logger.Error(ctx, "Failed to write ASCII HTML response", "error", err)
+	}
 }
 
 func searchBingImages(ctx context.Context, query string) (string, error) {
@@ -711,7 +715,7 @@ func main() {
 	if err != nil {
 		logger.Fatal(ctx, "Failed to subscribe to result queue", "error", err)
 	}
-	defer sub.Unsubscribe()
+	defer func() { _ = sub.Unsubscribe() }()
 
 	logger.Info(ctx, "Successfully connected to global Chrome browser instance")
 
