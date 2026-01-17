@@ -24,6 +24,7 @@ jobs:
     runs-on: self-hosted
     outputs:
       apps: ${{ steps.find-apps.outputs.apps }}
+      go_apps: ${{ steps.find-apps.outputs.go_apps }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,6 +43,8 @@ jobs:
           fi
 
           APPS=()
+          GO_APPS=()
+          SEEN_APPS=()
 
           for FILE in $CHANGED_FILES; do
             if [[ $FILE == apps/* && $FILE != apps/shared/* ]]; then
@@ -49,24 +52,44 @@ jobs:
               APP_NAME=$(echo $FILE | cut -d'/' -f2)
 
               # Check if this app is already in the list
-              if [[ ! " ${APPS[@]} " =~ "{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}" ]]; then
-                APPS+=("{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}")
+              if [[ ! " ${SEEN_APPS[@]} " =~ " $APP_NAME " ]]; then
+                SEEN_APPS+=("$APP_NAME")
+
+                APP_ENTRY="{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}"
+                APPS+=("$APP_ENTRY")
+
+                # Add to go_apps if it's a Go project
+                if [[ -f "$APP_PATH/go.mod" ]]; then
+                  GO_APPS+=("$APP_ENTRY")
+                fi
               fi
             fi
           done
 
-          # Format as JSON array for GitHub Actions
-          APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
+          # Format as JSON arrays for GitHub Actions
+          if [[ ${#APPS[@]} -eq 0 ]]; then
+            APPS_JSON="[]"
+          else
+            APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
+          fi
+
+          if [[ ${#GO_APPS[@]} -eq 0 ]]; then
+            GO_APPS_JSON="[]"
+          else
+            GO_APPS_JSON=$(printf '%s\n' "${GO_APPS[@]}" | jq -s . | jq -c .)
+          fi
 
           echo "Apps: $APPS_JSON"
+          echo "Go Apps: $GO_APPS_JSON"
           echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
+          echo "go_apps=$GO_APPS_JSON" >> $GITHUB_OUTPUT
 
   go-tests:
     needs: determine-app
-    if: needs.determine-app.outputs.app_paths != '[]'
+    if: needs.determine-app.outputs.go_apps != '[]'
     strategy:
       matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+        app: ${{ fromJson(needs.determine-app.outputs.go_apps) }}
     name: GO Tests for ${{ matrix.app.app_name }}
     uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
     with:
@@ -74,7 +97,7 @@ jobs:
 
   docker-build-and-push:
     needs: [determine-app]
-    if: needs.determine-app.outputs.app_paths != '[]'
+    if: needs.determine-app.outputs.apps != '[]'
     strategy:
       matrix:
         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
@@ -87,7 +110,7 @@ jobs:
 
   update-dev-kustomization:
     needs: [determine-app, docker-build-and-push]
-    if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: needs.determine-app.outputs.apps != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: self-hosted
     strategy:
       matrix:
