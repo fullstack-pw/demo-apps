@@ -40,4 +40,3 @@ COPY --from=go-builder /build/memorizer/main .
 EXPOSE 8080
 
 CMD ["./main"]
-
