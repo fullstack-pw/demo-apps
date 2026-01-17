@@ -3,7 +3,7 @@ resources:
 
 images:
   - name: registry.fullstack.pw/library/writer
-    newTag: 9e52e956586c4f25ca83a56e5c90ff250ef4e52f
+    newTag: 00bf4ccbe798797dee784bf8e5f4153dc9d3a111
 
 patches:
   - patch: |-
