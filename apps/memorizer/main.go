@@ -77,14 +77,12 @@ func storeInRedis(ctx context.Context, id string, content string, headers map[st
 	}
 
 	// Copy original headers if provided
-	if headers != nil {
-		for k, v := range headers {
-			redisMsg.Headers[k] = v
-			// Log if we find an image URL
-			if k == "image_url" {
-				logger.Info(ctx, "Found image URL in headers", "id", id, "image_url", v)
-				span.SetAttributes(attribute.String("message.image_url", v))
-			}
+	for k, v := range headers {
+		redisMsg.Headers[k] = v
+		// Log if we find an image URL
+		if k == "image_url" {
+			logger.Info(ctx, "Found image URL in headers", "id", id, "image_url", v)
+			span.SetAttributes(attribute.String("message.image_url", v))
 		}
 	}
 
@@ -153,7 +151,7 @@ func downloadImage(ctx context.Context, imageURL string) (string, error) {
 		logger.Error(ctx, "Failed to download image", "error", err, "url", imageURL)
 		return "", fmt.Errorf("failed to download image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check response status
 	if resp.StatusCode != http.StatusOK {
@@ -182,7 +180,7 @@ func downloadImage(ctx context.Context, imageURL string) (string, error) {
 		logger.Error(ctx, "Failed to create temporary file", "error", err)
 		return "", fmt.Errorf("failed to create temporary file: %w", err)
 	}
-	defer tempFile.Close()
+	defer func() { _ = tempFile.Close() }()
 
 	// Save image to temporary file
 	_, err = io.Copy(tempFile, resp.Body)
@@ -367,7 +365,7 @@ func handleMessage(msg *nats.Msg) {
 						}
 
 						// Clean up the HTML file
-						os.Remove(htmlFilename)
+						_ = os.Remove(htmlFilename)
 					}
 				}
 
