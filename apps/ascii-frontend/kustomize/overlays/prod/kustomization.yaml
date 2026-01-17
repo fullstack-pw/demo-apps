@@ -6,7 +6,7 @@ resources:
 
 images:
   - name: registry.fullstack.pw/library/ascii-frontend
-    newTag: a3fce155fc79472475cb4a2c2586d835cbd930a0
+    newTag: 9817164741aa0bc12d0a17f32e7d0207f269149b
 
 patches:
   - patch: |-
