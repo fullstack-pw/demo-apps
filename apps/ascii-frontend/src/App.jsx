@@ -48,12 +48,14 @@ function App() {
     try {
       // Get the current environment
       const hostname = window.location.hostname;
-      const isDevEnv = hostname.startsWith('dev');
-      const isStgEnv = hostname.startsWith('stg');
+      const isDevEnv = hostname.startsWith('dev.');
+      const isStgEnv = hostname.startsWith('stg.');
       const env = isDevEnv ? 'dev' : isStgEnv ? 'stg' : 'prod';
 
       // Construct the enqueuer URL based on environment
-      const enqueuerUrl = `https://${env}.enqueuer.fullstack.pw/add?queue=queue-${env}`;
+      // For prod, no prefix. For dev/stg, add the prefix.
+      const envPrefix = env === 'prod' ? '' : `${env}.`;
+      const enqueuerUrl = `https://${envPrefix}enqueuer.fullstack.pw/add?queue=queue-${env}`;
 
       const response = await fetch(enqueuerUrl, {
         method: 'POST',
