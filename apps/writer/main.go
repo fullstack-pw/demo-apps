@@ -619,7 +619,10 @@ func handleAsciiTerminal(w http.ResponseWriter, r *http.Request) {
 
 	// Set content type to text/plain
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Write([]byte(asciiTerminal))
+	if _, err := w.Write([]byte(asciiTerminal)); err != nil {
+		logger.Error(ctx, "Error writing ASCII terminal response", "error", err, "id", id)
+		return
+	}
 
 	logger.Info(ctx, "ASCII terminal art retrieved successfully", "id", id)
 }
@@ -662,7 +665,10 @@ func handleAsciiFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	// Set Content-Disposition header to suggest downloading as a file
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"ascii-%s.txt\"", id))
-	w.Write([]byte(asciiFile))
+	if _, err := w.Write([]byte(asciiFile)); err != nil {
+		logger.Error(ctx, "Error writing ASCII file response", "error", err, "id", id)
+		return
+	}
 
 	logger.Info(ctx, "ASCII file art retrieved successfully", "id", id)
 }
@@ -703,7 +709,10 @@ func handleAsciiHtml(w http.ResponseWriter, r *http.Request) {
 
 	// Set content type to HTML
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Write([]byte(asciiHtml))
+	if _, err := w.Write([]byte(asciiHtml)); err != nil {
+		logger.Error(ctx, "Error writing ASCII HTML response", "error", err, "id", id)
+		return
+	}
 
 	logger.Info(ctx, "ASCII HTML art retrieved successfully", "id", id)
 }
