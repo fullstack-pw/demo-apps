@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enqueuer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: enqueuer
+  template:
+    metadata:
+      labels:
+        app: enqueuer
+    spec:
+      containers:
+        - name: enqueuer
+          image: registry.fullstack.pw/library/enqueuer:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENV
+              value: "ephemeral"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: opentelemetry-collector.observability.svc.cluster.local:4317
+            - name: NATS_URL
+              value: nats.fullstack.pw:4222
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
