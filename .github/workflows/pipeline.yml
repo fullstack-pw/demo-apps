@@ -1,235 +1,235 @@
-name: Multi-App CI/CD Pipeline
+# name: Multi-App CI/CD Pipeline
 
-on:
-  pull_request:
-    branches:
-      - main
-    types:
-      - opened
-      - synchronize
-      - reopened
-    paths:
-      - "apps/**"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/**"
+# on:
+#   pull_request:
+#     branches:
+#       - main
+#     types:
+#       - opened
+#       - synchronize
+#       - reopened
+#     paths:
+#       - "apps/**"
+#   push:
+#     branches:
+#       - main
+#     paths:
+#       - "apps/**"
 
-permissions:
-  contents: write
+# permissions:
+#   contents: write
 
-jobs:
-  determine-app:
-    runs-on: self-hosted
-    outputs:
-      apps: ${{ steps.find-apps.outputs.apps }}
-      go_apps: ${{ steps.find-apps.outputs.go_apps }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Find changed apps
-        id: find-apps
-        run: |
-          if [[ "${{ github.event_name }}" == "push" ]]; then
-            # For push events, get changed files from the commit
-            CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
-          else
-            # For PR events, get changed files in the PR
-            CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD)
-          fi
-
-          APPS=()
-          GO_APPS=()
-          SEEN_APPS=()
-
-          for FILE in $CHANGED_FILES; do
-            if [[ $FILE == apps/* && $FILE != apps/shared/* ]]; then
-              APP_PATH=$(echo $FILE | cut -d'/' -f1-2)
-              APP_NAME=$(echo $FILE | cut -d'/' -f2)
-
-              # Check if this app is already in the list
-              if [[ ! " ${SEEN_APPS[@]} " =~ " $APP_NAME " ]]; then
-                SEEN_APPS+=("$APP_NAME")
-
-                APP_ENTRY="{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}"
-                APPS+=("$APP_ENTRY")
-
-                # Add to go_apps if it's a Go project
-                if [[ -f "$APP_PATH/go.mod" ]]; then
-                  GO_APPS+=("$APP_ENTRY")
-                fi
-              fi
-            fi
-          done
-
-          # Format as JSON arrays for GitHub Actions
-          if [[ ${#APPS[@]} -eq 0 ]]; then
-            APPS_JSON="[]"
-          else
-            APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
-          fi
-
-          if [[ ${#GO_APPS[@]} -eq 0 ]]; then
-            GO_APPS_JSON="[]"
-          else
-            GO_APPS_JSON=$(printf '%s\n' "${GO_APPS[@]}" | jq -s . | jq -c .)
-          fi
-
-          echo "Apps: $APPS_JSON"
-          echo "Go Apps: $GO_APPS_JSON"
-          echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
-          echo "go_apps=$GO_APPS_JSON" >> $GITHUB_OUTPUT
-
-  go-tests:
-    needs: determine-app
-    if: needs.determine-app.outputs.go_apps != '[]'
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.go_apps) }}
-    name: GO Tests for ${{ matrix.app.app_name }}
-    uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
-    with:
-      go-dir: ./${{ matrix.app.app_path }}
-
-  docker-build-and-push:
-    needs: [determine-app]
-    if: needs.determine-app.outputs.apps != '[]'
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-    name: Build and Push ${{ matrix.app.app_name }}
-    uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
-    with:
-      app-context: "./apps"
-      app-name: "${{ matrix.app.app_name }}"
-      app-dockerfile: "./apps/${{ matrix.app.app_name }}/Dockerfile"
-
-  update-dev-kustomization:
-    needs: [determine-app, docker-build-and-push]
-    if: needs.determine-app.outputs.apps != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: self-hosted
-    strategy:
-      matrix:
-        app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-    name: Deploy ${{ matrix.app.app_name }} to dev
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Update dev kustomization with new image tag
-        run: |
-          # Use full SHA to match the Docker tag from build-and-push.yml
-          VERSION="${{ github.sha }}"
-          KUSTOMIZATION_FILE="apps/${{ matrix.app.app_name }}/kustomize/overlays/dev/kustomization.yaml"
-
-          if [ ! -f "$KUSTOMIZATION_FILE" ]; then
-            echo "Warning: $KUSTOMIZATION_FILE not found, skipping"
-            exit 0
-          fi
-
-          echo "Updating ${{ matrix.app.app_name }} dev to version: $VERSION"
-          sed -i "s/newTag: .*/newTag: $VERSION/" "$KUSTOMIZATION_FILE"
-
-          git config user.name "GitHub Actions Bot"
-          git config user.email "actions@github.com"
-          git add "$KUSTOMIZATION_FILE"
-          git commit -m "chore(${{ matrix.app.app_name }}): deploy $VERSION to dev [skip ci]" || echo "No changes to commit"
-          git push || echo "Nothing to push"
-
-#   dev-deploy:
-#     needs: [determine-app, docker-build-and-push]
-#     if: needs.determine-app.outputs.app_paths != '[]'
-#     strategy:
-#       matrix:
-#         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-#     name: DEV deploy ${{ matrix.app.app_name }}
-#     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-#     with:
-#       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/dev"
-#       context: "dev"
-#       app-name: ${{ matrix.app.app_name }}
-
-#   dev-cypress-tests:
-#     needs: dev-deploy
-#     name: DEV cypress
-#     uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-#     with:
-#       start: npm run cypress:dev
-#       env-vars: |
-#         {
-#           "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
-#           "ENVIRONMENT": "dev",
-#           "TEST_RETRIES": "2"
-#         }
-
-#   stg-deploy:
-#     needs: [determine-app, dev-cypress-tests]
-#     if: needs.determine-app.outputs.app_paths != '[]'
-#     strategy:
-#       matrix:
-#         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-#     name: STG deploy ${{ matrix.app.app_name }}
-#     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-#     with:
-#       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
-#       context: "stg"
-#       app-name: ${{ matrix.app.app_name }}
-
-#   stg-cypress-tests:
-#     needs: stg-deploy
-#     name: STG cypress
-#     uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
-#     with:
-#       start: npm run cypress:stg
-#       env-vars: |
-#         {
-#           "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
-#           "WRITER_URL": "https://stg.writer.fullstack.pw",
-#           "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
-#           "ENVIRONMENT": "stg",
-#           "TEST_RETRIES": "2"
-#         }
-
-#   prod-deploy:
-#     needs: [determine-app, stg-cypress-tests]
-#     if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-#     strategy:
-#       matrix:
-#         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
-#     name: PROD deploy ${{ matrix.app.app_name }}
-#     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
-#     with:
-#       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
-#       context: "prod"
-#       app-name: ${{ matrix.app.app_name }}
-
-#   versioning:
-#     permissions:
-#       contents: write
+# jobs:
+#   determine-app:
 #     runs-on: self-hosted
-#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-#     name: Versioning
+#     outputs:
+#       apps: ${{ steps.find-apps.outputs.apps }}
+#       go_apps: ${{ steps.find-apps.outputs.go_apps }}
 #     steps:
-#       - name: Get Next Version
-#         id: semver
-#         uses: ietf-tools/semver-action@v1
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 #         with:
-#           token: ${{ github.token }}
-#           branch: main
+#           fetch-depth: 0
 
-#       - name: Create Release
-#         uses: ncipollo/release-action@v1.12.0
+#       - name: Find changed apps
+#         id: find-apps
+#         run: |
+#           if [[ "${{ github.event_name }}" == "push" ]]; then
+#             # For push events, get changed files from the commit
+#             CHANGED_FILES=$(git diff --name-only ${{ github.event.before }} ${{ github.event.after }})
+#           else
+#             # For PR events, get changed files in the PR
+#             CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }} HEAD)
+#           fi
+
+#           APPS=()
+#           GO_APPS=()
+#           SEEN_APPS=()
+
+#           for FILE in $CHANGED_FILES; do
+#             if [[ $FILE == apps/* && $FILE != apps/shared/* ]]; then
+#               APP_PATH=$(echo $FILE | cut -d'/' -f1-2)
+#               APP_NAME=$(echo $FILE | cut -d'/' -f2)
+
+#               # Check if this app is already in the list
+#               if [[ ! " ${SEEN_APPS[@]} " =~ " $APP_NAME " ]]; then
+#                 SEEN_APPS+=("$APP_NAME")
+
+#                 APP_ENTRY="{\"app_path\": \"$APP_PATH\", \"app_name\": \"$APP_NAME\"}"
+#                 APPS+=("$APP_ENTRY")
+
+#                 # Add to go_apps if it's a Go project
+#                 if [[ -f "$APP_PATH/go.mod" ]]; then
+#                   GO_APPS+=("$APP_ENTRY")
+#                 fi
+#               fi
+#             fi
+#           done
+
+#           # Format as JSON arrays for GitHub Actions
+#           if [[ ${#APPS[@]} -eq 0 ]]; then
+#             APPS_JSON="[]"
+#           else
+#             APPS_JSON=$(printf '%s\n' "${APPS[@]}" | jq -s . | jq -c .)
+#           fi
+
+#           if [[ ${#GO_APPS[@]} -eq 0 ]]; then
+#             GO_APPS_JSON="[]"
+#           else
+#             GO_APPS_JSON=$(printf '%s\n' "${GO_APPS[@]}" | jq -s . | jq -c .)
+#           fi
+
+#           echo "Apps: $APPS_JSON"
+#           echo "Go Apps: $GO_APPS_JSON"
+#           echo "apps=$APPS_JSON" >> $GITHUB_OUTPUT
+#           echo "go_apps=$GO_APPS_JSON" >> $GITHUB_OUTPUT
+
+#   go-tests:
+#     needs: determine-app
+#     if: needs.determine-app.outputs.go_apps != '[]'
+#     strategy:
+#       matrix:
+#         app: ${{ fromJson(needs.determine-app.outputs.go_apps) }}
+#     name: GO Tests for ${{ matrix.app.app_name }}
+#     uses: fullstack-pw/pipelines/.github/workflows/go-tests.yml@main
+#     with:
+#       go-dir: ./${{ matrix.app.app_path }}
+
+#   docker-build-and-push:
+#     needs: [determine-app]
+#     if: needs.determine-app.outputs.apps != '[]'
+#     strategy:
+#       matrix:
+#         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+#     name: Build and Push ${{ matrix.app.app_name }}
+#     uses: fullstack-pw/pipelines/.github/workflows/build-and-push.yml@main
+#     with:
+#       app-context: "./apps"
+#       app-name: "${{ matrix.app.app_name }}"
+#       app-dockerfile: "./apps/${{ matrix.app.app_name }}/Dockerfile"
+
+#   update-dev-kustomization:
+#     needs: [determine-app, docker-build-and-push]
+#     if: needs.determine-app.outputs.apps != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+#     runs-on: self-hosted
+#     strategy:
+#       matrix:
+#         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+#     name: Deploy ${{ matrix.app.app_name }} to dev
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v4
 #         with:
-#           allowUpdates: true
-#           draft: false
-#           makeLatest: true
-#           tag: ${{ steps.semver.outputs.next }}
-#           body: Changelog Contents
-#           token: ${{ github.token }}
+#           token: ${{ secrets.GITHUB_TOKEN }}
+#           fetch-depth: 0
+
+#       - name: Update dev kustomization with new image tag
+#         run: |
+#           # Use full SHA to match the Docker tag from build-and-push.yml
+#           VERSION="${{ github.sha }}"
+#           KUSTOMIZATION_FILE="apps/${{ matrix.app.app_name }}/kustomize/overlays/dev/kustomization.yaml"
+
+#           if [ ! -f "$KUSTOMIZATION_FILE" ]; then
+#             echo "Warning: $KUSTOMIZATION_FILE not found, skipping"
+#             exit 0
+#           fi
+
+#           echo "Updating ${{ matrix.app.app_name }} dev to version: $VERSION"
+#           sed -i "s/newTag: .*/newTag: $VERSION/" "$KUSTOMIZATION_FILE"
+
+#           git config user.name "GitHub Actions Bot"
+#           git config user.email "actions@github.com"
+#           git add "$KUSTOMIZATION_FILE"
+#           git commit -m "chore(${{ matrix.app.app_name }}): deploy $VERSION to dev [skip ci]" || echo "No changes to commit"
+#           git push || echo "Nothing to push"
+
+# #   dev-deploy:
+# #     needs: [determine-app, docker-build-and-push]
+# #     if: needs.determine-app.outputs.app_paths != '[]'
+# #     strategy:
+# #       matrix:
+# #         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+# #     name: DEV deploy ${{ matrix.app.app_name }}
+# #     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+# #     with:
+# #       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/dev"
+# #       context: "dev"
+# #       app-name: ${{ matrix.app.app_name }}
+
+# #   dev-cypress-tests:
+# #     needs: dev-deploy
+# #     name: DEV cypress
+# #     uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+# #     with:
+# #       start: npm run cypress:dev
+# #       env-vars: |
+# #         {
+# #           "ENQUEUER_URL": "https://dev.enqueuer.fullstack.pw",
+# #           "ENVIRONMENT": "dev",
+# #           "TEST_RETRIES": "2"
+# #         }
+
+# #   stg-deploy:
+# #     needs: [determine-app, dev-cypress-tests]
+# #     if: needs.determine-app.outputs.app_paths != '[]'
+# #     strategy:
+# #       matrix:
+# #         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+# #     name: STG deploy ${{ matrix.app.app_name }}
+# #     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+# #     with:
+# #       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/stg"
+# #       context: "stg"
+# #       app-name: ${{ matrix.app.app_name }}
+
+# #   stg-cypress-tests:
+# #     needs: stg-deploy
+# #     name: STG cypress
+# #     uses: fullstack-pw/pipelines/.github/workflows/cypress.yml@main
+# #     with:
+# #       start: npm run cypress:stg
+# #       env-vars: |
+# #         {
+# #           "ENQUEUER_URL": "https://stg.enqueuer.fullstack.pw",
+# #           "WRITER_URL": "https://stg.writer.fullstack.pw",
+# #           "MEMORIZER_URL": "https://stg.memorizer.fullstack.pw",
+# #           "ENVIRONMENT": "stg",
+# #           "TEST_RETRIES": "2"
+# #         }
+
+# #   prod-deploy:
+# #     needs: [determine-app, stg-cypress-tests]
+# #     if: needs.determine-app.outputs.app_paths != '[]' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+# #     strategy:
+# #       matrix:
+# #         app: ${{ fromJson(needs.determine-app.outputs.apps) }}
+# #     name: PROD deploy ${{ matrix.app.app_name }}
+# #     uses: fullstack-pw/pipelines/.github/workflows/deploy-kustomize.yml@main
+# #     with:
+# #       kustomize-dir: "./${{ matrix.app.app_path }}/kustomize/overlays/prod"
+# #       context: "prod"
+# #       app-name: ${{ matrix.app.app_name }}
+
+# #   versioning:
+# #     permissions:
+# #       contents: write
+# #     runs-on: self-hosted
+# #     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+# #     name: Versioning
+# #     steps:
+# #       - name: Get Next Version
+# #         id: semver
+# #         uses: ietf-tools/semver-action@v1
+# #         with:
+# #           token: ${{ github.token }}
+# #           branch: main
+
+# #       - name: Create Release
+# #         uses: ncipollo/release-action@v1.12.0
+# #         with:
+# #           allowUpdates: true
+# #           draft: false
+# #           makeLatest: true
+# #           tag: ${{ steps.semver.outputs.next }}
+# #           body: Changelog Contents
+# #           token: ${{ github.token }}

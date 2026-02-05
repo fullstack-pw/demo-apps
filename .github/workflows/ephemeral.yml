@@ -154,11 +154,11 @@ jobs:
         run: |
           PR_TAG="pr-${{ github.event.pull_request.number }}"
 
-          # Build all 4 images
-          docker build -t ${{ env.REGISTRY }}/library/writer:${PR_TAG} -f apps/writer/Dockerfile apps/writer &
-          docker build -t ${{ env.REGISTRY }}/library/enqueuer:${PR_TAG} -f apps/enqueuer/Dockerfile apps/enqueuer &
-          docker build -t ${{ env.REGISTRY }}/library/memorizer:${PR_TAG} -f apps/memorizer/Dockerfile apps/memorizer &
-          docker build -t ${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG} -f apps/ascii-frontend/Dockerfile apps/ascii-frontend &
+          # Build all 4 images with correct context
+          docker build -t ${{ env.REGISTRY }}/library/writer:${PR_TAG} -f apps/writer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/enqueuer:${PR_TAG} -f apps/enqueuer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/memorizer:${PR_TAG} -f apps/memorizer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG} -f apps/ascii-frontend/Dockerfile apps &
 
           # Wait for all builds to complete
           wait
