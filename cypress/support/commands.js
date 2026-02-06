@@ -1,10 +1,14 @@
 // This file allows to create custom Cypress commands and overwrite existing ones
 
 // -- This is a parent command --
-Cypress.Commands.add('sendMessage', (message, queueName = 'cypress-test') => {
+Cypress.Commands.add('sendMessage', (message, queueName = null) => {
+    // Use environment-specific queue name if not explicitly provided
+    const defaultQueue = `queue-${Cypress.env('ENVIRONMENT')}`;
+    const queue = queueName || defaultQueue;
+
     return cy.request({
         method: 'POST',
-        url: `${Cypress.env('ENQUEUER_URL')}/add?queue=${queueName}`,
+        url: `${Cypress.env('ENQUEUER_URL')}/add?queue=${queue}`,
         body: message,
         headers: {
             'Content-Type': 'application/json'
