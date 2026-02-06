@@ -15,6 +15,7 @@ spec:
       containers:
         - name: enqueuer
           image: registry.fullstack.pw/library/enqueuer:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:

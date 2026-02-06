@@ -15,6 +15,7 @@ spec:
       containers:
         - name: ascii-frontend
           image: registry.fullstack.pw/library/ascii-frontend:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 80
           resources:

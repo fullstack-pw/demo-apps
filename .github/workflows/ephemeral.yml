@@ -152,7 +152,7 @@ jobs:
       - name: Build Docker images
         if: github.event.action != 'closed'
         run: |
-          PR_TAG="pr-${{ github.event.pull_request.number }}"
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
 
           # Build all 4 images with correct context
           docker build -t ${{ env.REGISTRY }}/library/writer:${PR_TAG} -f apps/writer/Dockerfile apps &
@@ -162,12 +162,12 @@ jobs:
 
           # Wait for all builds to complete
           wait
-          echo "All images built successfully"
+          echo "All images built successfully with tag: ${PR_TAG}"
 
       - name: Push Docker images
         if: github.event.action != 'closed'
         run: |
-          PR_TAG="pr-${{ github.event.pull_request.number }}"
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
 
           # Login to Harbor
           echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
@@ -196,8 +196,9 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
           kubectl kustomize apps/writer/kustomize/overlays/ephemeral \
-            | sed "s|${{ env.REGISTRY }}/library/writer:pr-will-be-replaced|${{ env.REGISTRY }}/library/writer:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/library/writer:pr-will-be-replaced|${{ env.REGISTRY }}/library/writer:${PR_TAG}|" \
             | sed "s|dev.writer.fullstack.pw|${{ steps.cluster-info.outputs.writer_dns }}|g" \
             | kubectl apply -f -
 
@@ -208,8 +209,9 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
           kubectl kustomize apps/enqueuer/kustomize/overlays/ephemeral \
-            | sed "s|${{ env.REGISTRY }}/library/enqueuer:pr-will-be-replaced|${{ env.REGISTRY }}/library/enqueuer:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/library/enqueuer:pr-will-be-replaced|${{ env.REGISTRY }}/library/enqueuer:${PR_TAG}|" \
             | sed "s|dev.enqueuer.fullstack.pw|${{ steps.cluster-info.outputs.enqueuer_dns }}|g" \
             | kubectl apply -f -
 
@@ -220,8 +222,9 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
           kubectl kustomize apps/memorizer/kustomize/overlays/ephemeral \
-            | sed "s|${{ env.REGISTRY }}/library/memorizer:pr-will-be-replaced|${{ env.REGISTRY }}/library/memorizer:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/library/memorizer:pr-will-be-replaced|${{ env.REGISTRY }}/library/memorizer:${PR_TAG}|" \
             | sed "s|dev.memorizer.fullstack.pw|${{ steps.cluster-info.outputs.memorizer_dns }}|g" \
             | kubectl apply -f -
 
@@ -232,8 +235,9 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
         run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
           kubectl kustomize apps/ascii-frontend/kustomize/overlays/ephemeral \
-            | sed "s|${{ env.REGISTRY }}/library/ascii-frontend:pr-will-be-replaced|${{ env.REGISTRY }}/library/ascii-frontend:pr-${{ github.event.pull_request.number }}|" \
+            | sed "s|${{ env.REGISTRY }}/library/ascii-frontend:pr-will-be-replaced|${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG}|" \
             | sed "s|dev.ascii-frontend.fullstack.pw|${{ steps.cluster-info.outputs.frontend_dns }}|g" \
             | kubectl apply -f -
 
@@ -255,7 +259,7 @@ jobs:
             const enqueuerDns = '${{ steps.cluster-info.outputs.enqueuer_dns }}';
             const memorizerDns = '${{ steps.cluster-info.outputs.memorizer_dns }}';
             const frontendDns = '${{ steps.cluster-info.outputs.frontend_dns }}';
-            const prTag = 'pr-${{ github.event.pull_request.number }}';
+            const prTag = 'pr-${{ github.event.pull_request.number }}-${{ github.sha }}';
 
             const body = `## Ephemeral Environment Ready
 

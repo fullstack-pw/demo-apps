@@ -15,6 +15,7 @@ spec:
       containers:
         - name: memorizer
           image: registry.fullstack.pw/library/memorizer:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:

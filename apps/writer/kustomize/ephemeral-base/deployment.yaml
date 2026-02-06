@@ -15,6 +15,7 @@ spec:
       containers:
         - name: writer
           image: registry.fullstack.pw/library/writer:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
