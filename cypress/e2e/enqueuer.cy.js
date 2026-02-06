@@ -7,6 +7,8 @@ describe('Enqueuer Service Tests', () => {
     });
 
     it('should accept and queue valid messages', () => {
+        const queueName = `queue-${Cypress.env('ENVIRONMENT')}`;
+
         // Test with valid message
         const validMessage = {
             content: `Linux Tux`,
@@ -15,7 +17,7 @@ describe('Enqueuer Service Tests', () => {
 
         cy.request({
             method: 'POST',
-            url: `${Cypress.env('ENQUEUER_URL')}/add?queue=queue-dev`,
+            url: `${Cypress.env('ENQUEUER_URL')}/add?queue=${queueName}`,
             body: validMessage,
             headers: {
                 'Content-Type': 'application/json'
@@ -27,7 +29,7 @@ describe('Enqueuer Service Tests', () => {
 
             if (response.status === 201) {
                 expect(response.body).to.have.property('status');
-                expect(response.body).to.have.property('queue', 'queue-dev');
+                expect(response.body).to.have.property('queue', queueName);
                 expect(response.body).to.have.property('image_url').and.not.be.empty;
                 // ASCII fields are present but may be empty if memorizer didn't respond in time
                 expect(response.body).to.have.property('image_ascii_text');
