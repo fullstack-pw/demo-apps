@@ -442,15 +442,17 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	span.SetAttributes(attribute.String("message.id", id))
 
-	// Apply environment prefix to key (same as SetWithTracing does)
-	prefixedKey := redisConn.PrefixKey(id)
+	// Check for ASCII art keys instead of base message key
+	// The base message key is deleted by writer after processing, but ASCII art keys remain
+	terminalKey := redisConn.PrefixKey(id + ":ascii:terminal")
+	htmlKey := redisConn.PrefixKey(id + ":ascii:html")
 
-	// Check if the message exists in Redis using the prefixed key
-	exists, err := redisConn.Client().Exists(ctx, prefixedKey).Result()
+	// Check if either ASCII art key exists (indicates memorizer processed the message)
+	exists, err := redisConn.Client().Exists(ctx, terminalKey, htmlKey).Result()
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "Redis query failed")
-		logger.Error(ctx, "Error checking if message exists", "error", err, "id", id, "prefixed_key", prefixedKey)
+		logger.Error(ctx, "Error checking if message exists", "error", err, "id", id, "terminal_key", terminalKey, "html_key", htmlKey)
 		http.Error(w, "Error checking message status", http.StatusInternalServerError)
 		return
 	}
