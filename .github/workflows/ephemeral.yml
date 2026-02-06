@@ -331,6 +331,7 @@ jobs:
           MEMORIZER_URL: https://${{ needs.manage-environment.outputs.memorizer_dns }}
           FRONTEND_URL: https://${{ needs.manage-environment.outputs.frontend_dns }}
           TEST_ENV: ephemeral
+          ENVIRONMENT: ephemeral
           CYPRESS_CACHE_FOLDER: /tmp/.cache/Cypress
         run: |
           echo "Running Cypress tests for demo-apps"
