@@ -30,8 +30,9 @@ describe('Microservices Pipeline Tests', () => {
                 cy.log(`Message ${testId} sent to pipeline`);
 
                 // Use retry logic to wait for memorizer to process the message
-                // Add a small delay to avoid race condition where Redis write is still in progress
-                cy.wait(1000);
+                // Add a delay to ensure Redis write operation completes
+                // The memorizer stores in Redis asynchronously after publishing to NATS
+                cy.wait(30000);
 
                 // Check if the message was processed by Memorizer via Enqueuer's check endpoint
                 cy.request({
