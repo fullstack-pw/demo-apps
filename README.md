@@ -13,6 +13,33 @@ This project demonstrates a modern microservices architecture that processes mes
 The system consists of multiple microservices communicating via message queues:
 
 ![Arch](demo-apps.svg)
+
+### Complete Message Flow
+
+1. **User Request**: User accesses `ascii-frontend` and submits a query (e.g., "kubernetes")
+2. **Enqueuer Processing**:
+   - Receives the query via REST API (`POST /add`)
+   - Searches Google Images using Chromium headless browser
+   - Picks the first suitable image URL
+   - Publishes message with image URL to NATS queue (`{ENV}.queue-{QUEUE_NAME}`)
+   - Subscribes to result queue (`{ENV}.result-queue`) to wait for ASCII art response
+3. **Memorizer Processing**:
+   - Listens to NATS queue for new messages
+   - Downloads the image from the URL
+   - Generates ASCII art (terminal, file, and HTML formats)
+   - Stores the ASCII art output in Redis (with environment prefix: `{ENV}:{MESSAGE_ID}:ascii_*`)
+   - Publishes the result back to NATS result queue
+4. **Enqueuer Response**:
+   - Receives ASCII art result from NATS result queue
+   - Returns complete response to the user (including image URL and ASCII art)
+5. **Writer Storage**:
+   - Monitors Redis for new entries
+   - Retrieves processed messages with ASCII art
+   - Stores everything in PostgreSQL (environment-specific tables)
+   - Provides query endpoints for historical data
+
+### Technology Stack
+
 - **Communication**: NATS for message queuing
 - **Storage**: Redis for temporary storage, PostgreSQL for persistent storage
 - **Deployment**: Kubernetes with Kustomize configurations

@@ -23,7 +23,7 @@ spec:
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: opentelemetry-collector.observability.svc.cluster.local:4317
             - name: QUEUE_NAMES
-              value: "ephemeral-queue"
+              value: "queue-ephemeral"
             - name: REDIS_PASSWORD
               valueFrom:
                 secretKeyRef:
