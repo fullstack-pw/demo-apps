@@ -1,0 +1,357 @@
+name: PR Ephemeral Environment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  REGISTRY: registry.fullstack.pw
+  VAULT_ADDR: https://vault.fullstack.pw
+
+jobs:
+  manage-environment:
+    runs-on: self-hosted
+    outputs:
+      cluster_name: ${{ steps.cluster-info.outputs.cluster_name }}
+      writer_dns: ${{ steps.cluster-info.outputs.writer_dns }}
+      enqueuer_dns: ${{ steps.cluster-info.outputs.enqueuer_dns }}
+      memorizer_dns: ${{ steps.cluster-info.outputs.memorizer_dns }}
+      frontend_dns: ${{ steps.cluster-info.outputs.frontend_dns }}
+      deployment_status: ${{ steps.deployment-status.outputs.status }}
+    steps:
+      - name: Set cluster info
+        id: cluster-info
+        run: |
+          PR_NUM="${{ github.event.pull_request.number }}"
+          CLUSTER_NAME="pr-demo-apps-${PR_NUM}"
+          WRITER_DNS="pr-${PR_NUM}-writer.ephemeral.fullstack.pw"
+          ENQUEUER_DNS="pr-${PR_NUM}-enqueuer.ephemeral.fullstack.pw"
+          MEMORIZER_DNS="pr-${PR_NUM}-memorizer.ephemeral.fullstack.pw"
+          FRONTEND_DNS="pr-${PR_NUM}-ascii-frontend.ephemeral.fullstack.pw"
+
+          echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "writer_dns=$WRITER_DNS" >> $GITHUB_OUTPUT
+          echo "enqueuer_dns=$ENQUEUER_DNS" >> $GITHUB_OUTPUT
+          echo "memorizer_dns=$MEMORIZER_DNS" >> $GITHUB_OUTPUT
+          echo "frontend_dns=$FRONTEND_DNS" >> $GITHUB_OUTPUT
+
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: fullstack-pw/infra
+          token: ${{ secrets.RUNNER }}
+          path: infra
+
+      - name: Check if cluster exists
+        id: check-cluster
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          if kubectl get cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config &>/dev/null; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Cluster $CLUSTER_NAME already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "Cluster $CLUSTER_NAME does not exist"
+          fi
+
+      # ==================== CREATE/UPDATE ENVIRONMENT ====================
+      - name: Check IP pool capacity
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          cd infra
+          AVAILABLE=$(./clusters/scripts/ip_pool_manager.sh check-capacity)
+          CAPACITY_RESULT=$?
+          echo "Capacity available: $AVAILABLE slots free"
+          if [ "$CAPACITY_RESULT" -ne 0 ]; then
+            echo "::error::IP pool exhausted. All 5 ephemeral cluster slots are in use (10 IPs / 2 per cluster). Please close old PRs."
+            exit 1
+          fi
+
+      - name: Allocate IP from pool
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        id: allocate
+        run: |
+          cd infra
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          CLUSTER_IP=$(./clusters/scripts/ip_pool_manager.sh allocate "$CLUSTER_NAME")
+
+          # Calculate node IP (VIP + 1) - each cluster needs 2 IPs
+          IP_LAST_OCTET=$(echo "$CLUSTER_IP" | cut -d'.' -f4)
+          NODE_IP_LAST_OCTET=$((IP_LAST_OCTET + 1))
+          NODE_IP="192.168.1.${NODE_IP_LAST_OCTET}"
+
+          echo "ip=$CLUSTER_IP" >> $GITHUB_OUTPUT
+          echo "node_ip=$NODE_IP" >> $GITHUB_OUTPUT
+          echo "Allocated control plane VIP: $CLUSTER_IP"
+          echo "Node IP: $NODE_IP"
+
+      - name: Render Cluster API manifest
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          cd infra
+          export CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          export CLUSTER_IP="${{ steps.allocate.outputs.ip }}"
+          export NODE_IP="${{ steps.allocate.outputs.node_ip }}"
+          export PR_NUMBER="${{ github.event.pull_request.number }}"
+          export REPOSITORY="demo-apps"
+          envsubst < ephemeral-clusters/cluster-api/k3s-cluster.yaml.tpl > /tmp/cluster.yaml
+          cat /tmp/cluster.yaml
+
+      - name: Create cluster via Cluster API
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          kubectl apply -f /tmp/cluster.yaml --context tools --kubeconfig /home/runner/.kube/config
+
+      - name: Copy Proxmox credentials to namespace
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl --context tools --kubeconfig /home/runner/.kube/config \
+            get secret proxmox-credentials -n k3s-test -o json | \
+            jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.finalizers)' | \
+            kubectl --context tools --kubeconfig /home/runner/.kube/config apply -n "$CLUSTER_NAME" -f - || \
+            echo "Warning: Could not copy proxmox-credentials (may already exist)"
+
+      - name: Wait for cluster available
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          echo "Waiting for cluster $CLUSTER_NAME to be available..."
+          kubectl wait --for=condition=Available \
+            cluster/$CLUSTER_NAME \
+            -n $CLUSTER_NAME \
+            --timeout=5m --context tools --kubeconfig /home/runner/.kube/config
+
+      - name: Extract kubeconfig
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig
+
+          # Rename context to match workspace name for OpenTofu
+          ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context)
+          kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME"
+          kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME"
+
+      - name: Apply ephemeral infrastructure with OpenTofu
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          cd infra
+          make ephemeral-init
+          make ephemeral-apply WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }}
+
+      # ==================== BUILD AND DEPLOY (PR opened/updated) ====================
+      - name: Checkout app code
+        if: github.event.action != 'closed'
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        if: github.event.action != 'closed'
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+
+          # Build all 4 images with correct context
+          docker build -t ${{ env.REGISTRY }}/library/writer:${PR_TAG} -f apps/writer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/enqueuer:${PR_TAG} -f apps/enqueuer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/memorizer:${PR_TAG} -f apps/memorizer/Dockerfile apps &
+          docker build -t ${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG} -f apps/ascii-frontend/Dockerfile apps &
+
+          # Wait for all builds to complete
+          wait
+          echo "All images built successfully with tag: ${PR_TAG}"
+
+      - name: Push Docker images
+        if: github.event.action != 'closed'
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+
+          # Login to Harbor
+          echo "${HARBOR_KEY}" | docker login ${{ env.REGISTRY }} -u admin --password-stdin
+
+          # Push all 4 images
+          docker push ${{ env.REGISTRY }}/library/writer:${PR_TAG}
+          docker push ${{ env.REGISTRY }}/library/enqueuer:${PR_TAG}
+          docker push ${{ env.REGISTRY }}/library/memorizer:${PR_TAG}
+          docker push ${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG}
+
+      - name: Extract kubeconfig for deployment
+        if: github.event.action != 'closed'
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig
+
+          # Rename context to match workspace name for OpenTofu
+          ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context)
+          kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME"
+          kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME"
+
+      - name: Deploy writer to ephemeral cluster
+        if: github.event.action != 'closed'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+          kubectl kustomize apps/writer/kustomize/overlays/ephemeral \
+            | sed "s|${{ env.REGISTRY }}/library/writer:pr-will-be-replaced|${{ env.REGISTRY }}/library/writer:${PR_TAG}|" \
+            | sed "s|dev.writer.fullstack.pw|${{ steps.cluster-info.outputs.writer_dns }}|g" \
+            | kubectl apply -f -
+
+          kubectl rollout status deployment/writer -n default --timeout=5m
+
+      - name: Deploy enqueuer to ephemeral cluster
+        if: github.event.action != 'closed'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+          kubectl kustomize apps/enqueuer/kustomize/overlays/ephemeral \
+            | sed "s|${{ env.REGISTRY }}/library/enqueuer:pr-will-be-replaced|${{ env.REGISTRY }}/library/enqueuer:${PR_TAG}|" \
+            | sed "s|dev.enqueuer.fullstack.pw|${{ steps.cluster-info.outputs.enqueuer_dns }}|g" \
+            | kubectl apply -f -
+
+          kubectl rollout status deployment/enqueuer -n default --timeout=5m
+
+      - name: Deploy memorizer to ephemeral cluster
+        if: github.event.action != 'closed'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+          kubectl kustomize apps/memorizer/kustomize/overlays/ephemeral \
+            | sed "s|${{ env.REGISTRY }}/library/memorizer:pr-will-be-replaced|${{ env.REGISTRY }}/library/memorizer:${PR_TAG}|" \
+            | sed "s|dev.memorizer.fullstack.pw|${{ steps.cluster-info.outputs.memorizer_dns }}|g" \
+            | kubectl apply -f -
+
+          kubectl rollout status deployment/memorizer -n default --timeout=5m
+
+      - name: Deploy ascii-frontend to ephemeral cluster
+        if: github.event.action != 'closed'
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          PR_TAG="pr-${{ github.event.pull_request.number }}-${{ github.sha }}"
+          kubectl kustomize apps/ascii-frontend/kustomize/overlays/ephemeral \
+            | sed "s|${{ env.REGISTRY }}/library/ascii-frontend:pr-will-be-replaced|${{ env.REGISTRY }}/library/ascii-frontend:${PR_TAG}|" \
+            | sed "s|dev.ascii-frontend.fullstack.pw|${{ steps.cluster-info.outputs.frontend_dns }}|g" \
+            | kubectl apply -f -
+
+          kubectl rollout status deployment/ascii-frontend -n default --timeout=5m
+
+      - name: Set deployment status
+        id: deployment-status
+        if: github.event.action != 'closed'
+        run: echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Post deployment info
+        if: github.event.action != 'closed' && steps.check-cluster.outputs.exists == 'false'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const clusterName = '${{ steps.cluster-info.outputs.cluster_name }}';
+            const writerDns = '${{ steps.cluster-info.outputs.writer_dns }}';
+            const enqueuerDns = '${{ steps.cluster-info.outputs.enqueuer_dns }}';
+            const memorizerDns = '${{ steps.cluster-info.outputs.memorizer_dns }}';
+            const frontendDns = '${{ steps.cluster-info.outputs.frontend_dns }}';
+            const prTag = 'pr-${{ github.event.pull_request.number }}-${{ github.sha }}';
+
+            const body = `## Ephemeral Environment Ready
+
+            Your ephemeral environment has been deployed with all 4 demo apps!
+
+            ### Application URLs
+            - **Writer**: https://${writerDns}
+            - **Enqueuer**: https://${enqueuerDns}
+            - **Memorizer**: https://${memorizerDns}
+            - **ASCII Frontend**: https://${frontendDns}
+
+            ### Details
+            **Cluster**: \`${clusterName}\`
+            **Image Tag**: \`${prTag}\`
+
+            The environment will be automatically destroyed when this PR is closed.
+            `;
+
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: body
+            });
+
+      # ==================== CLEANUP ====================
+      - name: Get kubeconfig for destruction
+        if: github.event.action == 'closed' || (failure() && steps.check-cluster.outputs.exists == 'false')
+        run: |
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+          kubectl get secret ${CLUSTER_NAME}-kubeconfig \
+            -n $CLUSTER_NAME \
+            -o jsonpath='{.data.value}' --context tools --kubeconfig /home/runner/.kube/config | base64 -d > /tmp/kubeconfig || true
+
+          # Rename context to match workspace name for OpenTofu
+          if [ -f /tmp/kubeconfig ]; then
+            ORIGINAL_CONTEXT=$(kubectl --kubeconfig /tmp/kubeconfig config current-context 2>/dev/null || echo "")
+            if [ -n "$ORIGINAL_CONTEXT" ]; then
+              kubectl --kubeconfig /tmp/kubeconfig config rename-context "$ORIGINAL_CONTEXT" "$CLUSTER_NAME" 2>/dev/null || true
+              kubectl --kubeconfig /tmp/kubeconfig config use-context "$CLUSTER_NAME" 2>/dev/null || true
+            fi
+          fi
+
+      - name: Destroy ephemeral infrastructure
+        if: github.event.action == 'closed' || (failure() && steps.check-cluster.outputs.exists == 'false')
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          cd infra
+          CLUSTER_NAME="${{ steps.cluster-info.outputs.cluster_name }}"
+
+          make ephemeral-init
+          make ephemeral-destroy WORKSPACE=${{ steps.cluster-info.outputs.cluster_name }} || true
+
+          kubectl delete cluster "$CLUSTER_NAME" -n "$CLUSTER_NAME" --context tools --kubeconfig /home/runner/.kube/config || true
+
+          ./clusters/scripts/ip_pool_manager.sh release "$CLUSTER_NAME" || true
+
+  cypress-tests:
+    needs: manage-environment
+    if: github.event.action != 'closed' && needs.manage-environment.outputs.deployment_status == 'success'
+    runs-on: self-hosted
+    container:
+      image: cypress/included:13.6.4
+    steps:
+      - name: Checkout demo-apps repository
+        uses: actions/checkout@v4
+
+      - name: Run Cypress tests
+        env:
+          WRITER_URL: https://${{ needs.manage-environment.outputs.writer_dns }}
+          ENQUEUER_URL: https://${{ needs.manage-environment.outputs.enqueuer_dns }}
+          MEMORIZER_URL: https://${{ needs.manage-environment.outputs.memorizer_dns }}
+          FRONTEND_URL: https://${{ needs.manage-environment.outputs.frontend_dns }}
+          TEST_ENV: ephemeral
+          ENVIRONMENT: ephemeral
+          CYPRESS_CACHE_FOLDER: /tmp/.cache/Cypress
+        run: |
+          echo "Running Cypress tests for demo-apps"
+
+          # Install dependencies
+          npm ci
+
+          # Run Cypress tests (if they exist)
+          if [ -d "cypress/e2e" ]; then
+            npx cypress run \
+              --env WRITER_URL=${WRITER_URL},ENQUEUER_URL=${ENQUEUER_URL},MEMORIZER_URL=${MEMORIZER_URL},FRONTEND_URL=${FRONTEND_URL},TEST_ENV=${TEST_ENV} \
+              --config baseUrl=${FRONTEND_URL}
+          else
+            echo "No Cypress tests found, skipping..."
+          fi

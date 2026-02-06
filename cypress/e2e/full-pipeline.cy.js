@@ -29,6 +29,7 @@ describe('Microservices Pipeline Tests', () => {
                 expect(response.status).to.equal(201);
                 cy.log(`Message ${testId} sent to pipeline`);
 
+                // If enqueuer returned 201, memorizer has already processed and stored the message
                 // Check if the message was processed by Memorizer via Enqueuer's check endpoint
                 cy.request({
                     method: 'GET',

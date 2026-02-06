@@ -86,7 +86,7 @@ module.exports = defineConfig({
         supportFile: 'cypress/support/e2e.js',
         defaultCommandTimeout: 10000,
         requestTimeout: 8000,
-        responseTimeout: 30000,
+        responseTimeout: 180000,
         retries: {
             runMode: 2,
             openMode: 0

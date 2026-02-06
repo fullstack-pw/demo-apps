@@ -10,5 +10,8 @@
     },
     "local": {
         "enqueuer": "http://localhost:8081"
+    },
+    "ephemeral": {
+        "enqueuer": "PLACEHOLDER_WILL_BE_OVERRIDDEN"
     }
 }
